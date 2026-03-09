@@ -2,19 +2,18 @@ name: SalaatiSwiftUi
 options:
   bundleIdPrefix: com.salaati
   deploymentTarget:
-    iOS: "16.0"
+    macOS: "14.0"
   xcodeVersion: "15.0"
 
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    TARGETED_DEVICE_FAMILY: "1,2"
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
 
 targets:
   SalaatiSwiftUi:
     type: application
-    platform: iOS
+    platform: macOS
     sources:
       - path: SalaatiSwiftUi
     settings:
@@ -22,15 +21,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.salaati.app
         INFOPLIST_KEY_CFBundleDisplayName: Salaati
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         ENABLE_PREVIEWS: YES
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_NSUserNotificationAlertStyle: alert
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        COMBINE_HIDPI_IMAGES: YES
 
 schemes:
   SalaatiSwiftUi:
