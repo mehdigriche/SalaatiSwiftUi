@@ -153,7 +153,6 @@ class PrayerTimesManager: ObservableObject {
                 return
             }
         }
-        // If all prayers passed, show Isha
         currentPrayerIndex = max(0, prayers.count - 1)
     }
     
@@ -186,13 +185,12 @@ class PrayerTimesManager: ObservableObject {
     }
 }
 
-// MARK: - AnyCodable for flexible JSON parsing
+// MARK: - AnyCodable
+// MARK: - AnyCodable
 struct AnyCodable: Codable {
     let value: Any
     
-    init(_ value: Any) {
-        self.value = value
-    }
+    init(_ value: Any) { self.value = value }
     
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -256,7 +254,6 @@ struct SalaatiApp: View {
     
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Content
             Group {
                 switch selectedTab {
                 case .home: HomeView()
@@ -268,7 +265,6 @@ struct SalaatiApp: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             
-            // Bottom Navigation Bar
             bottomNavBar
         }
         .ignoresSafeArea(.keyboard)
@@ -304,11 +300,9 @@ struct SalaatiApp: View {
 // MARK: - Home View
 struct HomeView: View {
     @StateObject private var manager = PrayerTimesManager()
-    @State private var showingSettings = false
     
     var body: some View {
         ZStack {
-            // Background gradient
             LinearGradient(
                 gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]),
                 startPoint: .top,
@@ -353,15 +347,7 @@ struct HomeView: View {
                     }
                 }
                 .padding(.horizontal)
-                .padding(.bottom, 80) // Space for nav bar
-            }
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView(manager: manager)
-        }
-        .onAppear {
-            if let button = NSApp.windows.first?.standardWindowButton(.closeButton) {
-                // Settings accessible via tab
+                .padding(.bottom, 80)
             }
         }
     }
@@ -376,7 +362,7 @@ struct HomeView: View {
         let nextPrayer = enabledPrayers[currentIndex]
         
         return AnyView(VStack(spacing: 8) {
-            Text("الموعد القادم").font(.subheadline).foregroundColor(.white.opacity(0.7))
+            Text("Next Prayer").font(.subheadline).foregroundColor(.white.opacity(0.7))
             
             Text(nextPrayer.name)
                 .font(.system(size: 32, weight: .bold))
@@ -399,16 +385,13 @@ struct HomeView: View {
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                )
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.2), lineWidth: 1))
         ))
     }
     
     private var emptyCard: some View {
         AnyView(VStack {
-            Text("جميع الصلوات انتهت")
+            Text("All prayers completed")
                 .foregroundColor(.white.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
@@ -470,7 +453,7 @@ struct QiblaView: View {
             LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
             
             VStack(spacing: 30) {
-                Text("القبله").font(.system(size: 28, weight: .bold)).foregroundColor(.white)
+                Text("Qibla").font(.system(size: 28, weight: .bold)).foregroundColor(.white)
                 
                 ZStack {
                     Circle()
@@ -488,7 +471,7 @@ struct QiblaView: View {
                 }
                 
                 VStack(spacing: 8) {
-                    Text("اتجاه القبله").font(.subheadline).foregroundColor(.white.opacity(0.7))
+                    Text("Direction").font(.subheadline).foregroundColor(.white.opacity(0.7))
                     Text("95°").font(.system(size: 32, weight: .bold)).foregroundColor(.white)
                 }
             }
@@ -517,7 +500,7 @@ struct QuranView: View {
             
             ScrollView {
                 VStack(spacing: 8) {
-                    Text("القرآن الكريم")
+                    Text("Quran")
                         .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.vertical, 20)
@@ -557,8 +540,8 @@ struct DuaView: View {
         ("دعاء الاستخاره", "Istikhara Prayer", "اللهم اني استخيرك بعلمك"),
         ("دعاء الصباح", "Morning Prayer", "اللهم بك أصبحنا"),
         ("دعاء المساء", "Evening Prayer", "اللهم بك أمسيت"),
-        ("دعاء перед сном", "Before Sleep", "باسمك اللهم أموت وأحيا"),
-        ("دعاء الدخول للمسجد", "Entering Mosque", "اللهم افتح لي أبواب رحمتك")
+        ("دعاء قبل النوم", "Before Sleep", "باسمك اللهم أموت وأحيا"),
+        ("دعاء دخول المسجد", "Entering Mosque", "اللهم افتح لي أبواب رحمتك")
     ]
     
     var body: some View {
@@ -567,7 +550,7 @@ struct DuaView: View {
             
             ScrollView {
                 VStack(spacing: 8) {
-                    Text("الأدعية")
+                    Text("Duas")
                         .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.vertical, 20)
@@ -610,14 +593,14 @@ struct SettingsTabView: View {
             
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("الإعدادات")
+                    Text("Settings")
                         .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.top, 20)
                         .padding(.bottom, 10)
                     
                     // Location Section
-                    SettingsSection(title: "الموقع") {
+                    SettingsSection(title: "Location") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(manager.locationName)
                                 .font(.system(size: 16))
@@ -629,14 +612,14 @@ struct SettingsTabView: View {
                     }
                     
                     // Calculation Method
-                    SettingsSection(title: "طريقة الحساب") {
+                    SettingsSection(title: "Calculation Method") {
                         Text("Muslim World League")
                             .foregroundColor(.white.opacity(0.8))
                     }
                     
                     // Notifications
-                    SettingsSection(title: "الإشعارات") {
-                        Toggle("تفعيل الإشعارات", isOn: .constant(true))
+                    SettingsSection(title: "Notifications") {
+                        Toggle("Enable Notifications", isOn: .constant(true))
                             .tint(Color(hex: "E94560"))
                             .foregroundColor(.white)
                     }
@@ -671,87 +654,6 @@ struct SettingsSection<Content: View>: View {
                         .fill(Color.white.opacity(0.05))
                 )
         }
-    }
-}
-
-// MARK: - Settings Sheet View
-struct SettingsView: View {
-    @ObservedObject var manager: PrayerTimesManager
-    @Environment(\.dismiss) private var dismiss
-    @State private var locationName: String = ""
-    @State private var latitude: String = ""
-    @State private var longitude: String = ""
-    @State private var isFetchingLocation: Bool = false
-    
-    private let popularLocations = [
-        ("Casablanca, Morocco", 33.5731, -7.5898),
-        ("Rabat, Morocco", 34.0209, -6.8416),
-        ("Marrakech, Morocco", 31.6295, -7.9811),
-        ("London, UK", 51.5074, -0.1278),
-        ("Paris, France", 48.8566, 2.3522),
-        ("Dubai, UAE", 25.2048, 55.2708),
-        ("Istanbul, Turkey", 41.0082, 28.9784)
-    ]
-    
-    var body: some View {
-        NavigationView {
-            ZStack {
-                Color(hex: "1A1A2E").ignoresSafeArea()
-                
-                Form {
-                    Section("Location") {
-                        TextField("Location Name", text: $locationName).foregroundColor(.white)
-                        TextField("Latitude", text: $latitude).foregroundColor(.white)
-                        TextField("Longitude", text: $longitude).foregroundColor(.white)
-                    }
-                    .listRowBackground(Color.white.opacity(0.05))
-                    
-                    Section("Popular Locations") {
-                        ForEach(popularLocations, id: \.0) { name, lat, lon in
-                            Button(action: {
-                                locationName = name
-                                latitude = String(lat)
-                                longitude = String(lon)
-                            }) {
-                                HStack {
-                                    Text(name).foregroundColor(.white)
-                                    Spacer()
-                                    if locationName == name {
-                                        Image(systemName: "checkmark").foregroundColor(Color(hex: "E94560"))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .listRowBackground(Color.white.opacity(0.05))
-                }
-                .scrollContentBackground(.hidden)
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }.foregroundColor(.white)
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") { saveAndClose() }.foregroundColor(Color(hex: "E94560"))
-                }
-            }
-        }
-        .onAppear { loadSettings() }
-    }
-    
-    private func loadSettings() {
-        locationName = manager.locationName
-        latitude = String(manager.latitude)
-        longitude = String(manager.longitude)
-    }
-    
-    private func saveAndClose() {
-        if let lat = Double(latitude), let lon = Double(longitude) {
-            manager.updateLocation(name: locationName, lat: lat, lon: lon)
-        }
-        dismiss()
     }
 }
 
