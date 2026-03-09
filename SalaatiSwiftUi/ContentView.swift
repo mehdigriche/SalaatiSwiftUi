@@ -9,9 +9,7 @@ struct SalaatiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        Settings {
-            EmptyView()
-        }
+        Settings { EmptyView() }
     }
 }
 
@@ -22,7 +20,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover!
     var timer: Timer?
     var prayerManager = PrayerTimesManager()
-    var settingsManager = SettingsManager.shared
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -49,7 +46,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: 380, height: 550)
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager))
+        popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager, appDelegate: self))
     }
     
     private func startTimer() {
@@ -61,47 +58,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    private func updateStatusItem() {
+    func updateStatusItem() {
         guard let button = statusItem.button else { return }
+        let settings = SettingsManager.shared
         
-        if settingsManager.showIcon {
+        // Icon
+        if settings.showIcon {
             button.image = NSImage(systemSymbolName: "moon.stars.fill", accessibilityDescription: "Salaati")
-            button.imagePosition = (settingsManager.prayerNameDisplay != .none || settingsManager.prayerTimeDisplay != .none) ? .imageLeading : .imageOnly
         } else {
             button.image = nil
         }
         
-        guard settingsManager.showNextPrayer else {
-            button.title = ""
-            return
-        }
+        // Build display text
+        var text = ""
         
-        var menuText = ""
-        
-        if settingsManager.prayerNameDisplay != .none, let nextPrayer = prayerManager.getNextPrayer() {
-            let name = settingsManager.arabicMode ? nextPrayer.arabicName : nextPrayer.name
-            switch settingsManager.prayerNameDisplay {
-            case .full: menuText = name
-            case .abbreviation: menuText = String(name.prefix(3))
-            case .none: break
+        if settings.showNextPrayer, let nextPrayer = prayerManager.getNextPrayer() {
+            // Prayer name
+            if settings.prayerNameDisplay == .full {
+                text += settings.arabicMode ? nextPrayer.arabicName : nextPrayer.name
+            } else if settings.prayerNameDisplay == .abbreviation {
+                text += String((settings.arabicMode ? nextPrayer.arabicName : nextPrayer.name).prefix(3))
+            }
+            
+            // Separator
+            if settings.prayerNameDisplay != .none && settings.prayerTimeDisplay != .none {
+                text += " "
+            }
+            
+            // Time
+            if settings.prayerTimeDisplay == .countdown {
+                text += prayerManager.timeRemaining()
+            } else if settings.prayerTimeDisplay == .time {
+                text += timeString(from: nextPrayer.time)
             }
         }
         
-        if settingsManager.prayerTimeDisplay == .countdown {
-            if !menuText.isEmpty { menuText += " " }
-            menuText += prayerManager.timeRemaining()
-        } else if settingsManager.prayerTimeDisplay == .time, let nextPrayer = prayerManager.getNextPrayer() {
-            if !menuText.isEmpty { menuText += " " }
-            menuText += timeFormatter.string(from: nextPrayer.time)
-        }
+        button.title = text
         
-        button.title = menuText
+        // Icon position
+        if settings.showIcon && !text.isEmpty {
+            button.imagePosition = .imageLeading
+        } else if settings.showIcon {
+            button.imagePosition = .imageOnly
+        }
     }
     
-    private var timeFormatter: DateFormatter {
+    private func timeString(from date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "hh:mm"
-        return formatter
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
     
     @objc func togglePopover() {
@@ -120,23 +125,23 @@ class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     
     @Published var showNextPrayer: Bool {
-        didSet { UserDefaults.standard.set(showNextPrayer, forKey: "showNextPrayer") }
+        didSet { UserDefaults.standard.set(showNextPrayer, forKey: "showNextPrayer"); notifyChange() }
     }
     
     @Published var prayerNameDisplay: PrayerNameDisplay {
-        didSet { UserDefaults.standard.set(prayerNameDisplay.rawValue, forKey: "prayerNameDisplay") }
+        didSet { UserDefaults.standard.set(prayerNameDisplay.rawValue, forKey: "prayerNameDisplay"); notifyChange() }
     }
     
     @Published var prayerTimeDisplay: PrayerTimeDisplay {
-        didSet { UserDefaults.standard.set(prayerTimeDisplay.rawValue, forKey: "prayerTimeDisplay") }
+        didSet { UserDefaults.standard.set(prayerTimeDisplay.rawValue, forKey: "prayerTimeDisplay"); notifyChange() }
     }
     
     @Published var showIcon: Bool {
-        didSet { UserDefaults.standard.set(showIcon, forKey: "showIcon") }
+        didSet { UserDefaults.standard.set(showIcon, forKey: "showIcon"); notifyChange() }
     }
     
     @Published var arabicMode: Bool {
-        didSet { UserDefaults.standard.set(arabicMode, forKey: "arabicMode") }
+        didSet { UserDefaults.standard.set(arabicMode, forKey: "arabicMode"); notifyChange() }
     }
     
     @Published var startAtLogin: Bool {
@@ -147,11 +152,15 @@ class SettingsManager: ObservableObject {
     }
     
     @Published var asrMethod: AsrMethod {
-        didSet { UserDefaults.standard.set(asrMethod.rawValue, forKey: "asrMethod") }
+        didSet { UserDefaults.standard.set(asrMethod.rawValue, forKey: "asrMethod"); notifyChange() }
     }
     
     @Published var fajrIshaMethod: Int {
-        didSet { UserDefaults.standard.set(fajrIshaMethod, forKey: "fajrIshaMethod") }
+        didSet { UserDefaults.standard.set(fajrIshaMethod, forKey: "fajrIshaMethod"); notifyChange() }
+    }
+    
+    private func notifyChange() {
+        NotificationCenter.default.post(name: .settingsChanged, object: nil)
     }
     
     private init() {
@@ -180,21 +189,20 @@ class SettingsManager: ObservableObject {
     }
 }
 
+extension Notification.Name {
+    static let settingsChanged = Notification.Name("settingsChanged")
+}
+
 enum PrayerNameDisplay: Int, CaseIterable {
-    case full = 0
-    case abbreviation = 1
-    case none = 2
+    case full = 0, abbreviation = 1, none = 2
 }
 
 enum PrayerTimeDisplay: Int, CaseIterable {
-    case countdown = 0
-    case time = 1
-    case none = 2
+    case countdown = 0, time = 1, none = 2
 }
 
 enum AsrMethod: Int, CaseIterable {
-    case standard = 0
-    case hanbali = 1
+    case standard = 0, hanbali = 1
 }
 
 // MARK: - Models
@@ -229,8 +237,6 @@ class PrayerTimesManager: ObservableObject {
     @Published var hijriDate: String = ""
     @Published var timezone: TimeZone = TimeZone(identifier: "Africa/Casablanca")!
     
-    var settingsManager = SettingsManager.shared
-    
     init() {
         loadSavedLocation()
         Task { await fetchPrayerTimes() }
@@ -255,16 +261,22 @@ class PrayerTimesManager: ObservableObject {
         dateFormatter.dateFormat = "dd-MM-yyyy"
         let dateString = dateFormatter.string(from: Date())
         
-        let method = settingsManager.fajrIshaMethod
-        let urlString = "https://api.aladhan.com/v1/timings/\(dateString)?latitude=\(latitude)&longitude=\(longitude)&method=\(method)"
+        let method = SettingsManager.shared.fajrIshaMethod
+        let urlString = "https://api.aladhan.com/v1/timingsByCity?city=\(locationName.components(separatedBy: ",").first ?? "Casablanca")&country=\(locationName.components(separatedBy: ",").last?.trimmingCharacters(in: .whitespaces) ?? "Morocco")&method=\(method)"
         
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString) else {
+            prayers = getDefaultPrayers()
+            return
+        }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(AlAdhanResponse.self, from: data)
             
-            guard let timings = response.data.timings else { return }
+            guard let timings = response.data.timings else {
+                prayers = getDefaultPrayers()
+                return
+            }
             
             let calendar = Calendar.current
             let today = Date()
@@ -284,6 +296,7 @@ class PrayerTimesManager: ObservableObject {
             save()
             NotificationManager.shared.schedulePrayerNotifications(prayers: prayers, locationName: locationName)
         } catch {
+            print("Error fetching prayer times: \(error)")
             prayers = getDefaultPrayers()
         }
     }
@@ -366,7 +379,7 @@ struct Timings: Codable {
 // MARK: - Menu Bar Popover View
 struct MenuBarPopoverView: View {
     @ObservedObject var manager: PrayerTimesManager
-    @ObservedObject var settingsManager = SettingsManager.shared
+    weak var appDelegate: AppDelegate?
     @State private var showingSettings = false
     
     var body: some View {
@@ -382,6 +395,9 @@ struct MenuBarPopoverView: View {
                 footerView
             }
         }.frame(width: 380, height: 550)
+        .onReceive(NotificationCenter.default.publisher(for: .settingsChanged)) { _ in
+            appDelegate?.updateStatusItem()
+        }
     }
     
     private var headerView: some View {
@@ -406,7 +422,7 @@ struct MenuBarPopoverView: View {
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1))))
         }
         
-        let displayName = settingsManager.arabicMode ? nextPrayer.arabicName : nextPrayer.name
+        let displayName = SettingsManager.shared.arabicMode ? nextPrayer.arabicName : nextPrayer.name
         
         return AnyView(VStack(spacing: 4) {
             Text("Next Prayer").font(.system(size: 11)).foregroundColor(.white.opacity(0.6))
@@ -421,7 +437,7 @@ struct MenuBarPopoverView: View {
         ScrollView {
             VStack(spacing: 6) {
                 ForEach(manager.prayers) { prayer in
-                    let displayName = settingsManager.arabicMode ? prayer.arabicName : prayer.name
+                    let displayName = SettingsManager.shared.arabicMode ? prayer.arabicName : prayer.name
                     HStack {
                         Text(displayName).font(.system(size: 14, weight: .medium)).foregroundColor(prayer.isEnabled ? .white : .white.opacity(0.4))
                         Spacer()
@@ -440,7 +456,7 @@ struct MenuBarPopoverView: View {
             Button(action: { Task { await manager.fetchPrayerTimes() } }) { HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text("Refresh") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
             Button(action: { NSApplication.shared.terminate(nil) }) { HStack(spacing: 4) { Image(systemName: "power"); Text("Quit") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
         }.padding(.vertical, 12).padding(.horizontal, 16).background(Color.black.opacity(0.2))
-        .sheet(isPresented: $showingSettings) { SettingsView(manager: manager) }
+        .sheet(isPresented: $showingSettings) { SettingsView(manager: manager, appDelegate: appDelegate) }
     }
     
     private func isCurrentPrayer(_ prayer: Prayer) -> Bool {
@@ -464,6 +480,7 @@ struct MenuBarPopoverView: View {
 // MARK: - Settings View
 struct SettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
+    weak var appDelegate: AppDelegate?
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
     
@@ -478,9 +495,9 @@ struct SettingsView: View {
                 }.pickerStyle(.segmented).padding()
                 
                 TabView(selection: $selectedTab) {
-                    GeneralSettingsView().tag(0)
-                    LocationSettingsView(manager: manager).tag(1)
-                    PrayerTimesSettingsView().tag(2)
+                    GeneralSettingsView(appDelegate: appDelegate).tag(0)
+                    LocationSettingsView(manager: manager, appDelegate: appDelegate).tag(1)
+                    PrayerTimesSettingsView(appDelegate: appDelegate).tag(2)
                 }.tabViewStyle(.automatic)
                 
                 HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
@@ -491,6 +508,7 @@ struct SettingsView: View {
 
 // MARK: - General Settings
 struct GeneralSettingsView: View {
+    weak var appDelegate: AppDelegate?
     @ObservedObject var settingsManager = SettingsManager.shared
     
     var body: some View {
@@ -498,7 +516,9 @@ struct GeneralSettingsView: View {
             VStack(spacing: 16) {
                 SettingsSection(title: "Menu Bar Display") {
                     Toggle("Show Next Prayer", isOn: $settingsManager.showNextPrayer).tint(Color(hex: "E94560"))
+                        .onChange(of: settingsManager.showNextPrayer) { _ in appDelegate?.updateStatusItem() }
                     Toggle("Show Icon", isOn: $settingsManager.showIcon).tint(Color(hex: "E94560"))
+                        .onChange(of: settingsManager.showIcon) { _ in appDelegate?.updateStatusItem() }
                 }
                 
                 SettingsSection(title: "Prayer Name") {
@@ -507,6 +527,7 @@ struct GeneralSettingsView: View {
                         Text("Abbreviation").tag(PrayerNameDisplay.abbreviation)
                         Text("None").tag(PrayerNameDisplay.none)
                     }.pickerStyle(.segmented)
+                    .onChange(of: settingsManager.prayerNameDisplay) { _ in appDelegate?.updateStatusItem() }
                 }
                 
                 SettingsSection(title: "Prayer Time") {
@@ -515,6 +536,7 @@ struct GeneralSettingsView: View {
                         Text("Time").tag(PrayerTimeDisplay.time)
                         Text("None").tag(PrayerTimeDisplay.none)
                     }.pickerStyle(.segmented)
+                    .onChange(of: settingsManager.prayerTimeDisplay) { _ in appDelegate?.updateStatusItem() }
                 }
                 
                 SettingsSection(title: "Language") {
@@ -532,6 +554,7 @@ struct GeneralSettingsView: View {
 // MARK: - Location Settings
 struct LocationSettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
+    weak var appDelegate: AppDelegate?
     
     @State private var cityInput: String = ""
     @State private var latitude: String = ""
@@ -563,7 +586,7 @@ struct LocationSettingsView: View {
                 }
                 
                 SettingsSection(title: "Enter City or Zip Code") {
-                    TextField("City name or zip code", text: $cityInput).textFieldStyle(.roundedBorder).onSubmit { searchCity() }
+                    TextField("City name", text: $cityInput).textFieldStyle(.roundedBorder)
                     
                     HStack {
                         TextField("Latitude", text: $latitude).textFieldStyle(.roundedBorder)
@@ -583,22 +606,18 @@ struct LocationSettingsView: View {
                 SettingsSection(title: "Timezone") {
                     Picker("Select Timezone", selection: $selectedTimezone) {
                         ForEach(timezones, id: \.self) { tz in Text(tz).tag(tz) }
-                    }.onChange(of: selectedTimezone) { _ in applyTimezone() }
+                    }
                 }
                 
                 SettingsSection(title: "Popular Cities") {
                     ForEach(popularCities, id: \.0) { city, lat, lon, tz in
                         Button(action: {
-                            cityInput = city
-                            latitude = String(lat)
-                            longitude = String(lon)
-                            selectedTimezone = tz
-                            manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
+                            setLocation(city: city, lat: lat, lon: lon, tz: tz)
                         }) {
                             HStack {
                                 Text(city).foregroundColor(.white)
                                 Spacer()
-                                if manager.locationName == city {
+                                if manager.locationName.contains(city) {
                                     Image(systemName: "checkmark").foregroundColor(Color(hex: "E94560"))
                                 }
                             }.padding(.vertical, 4)
@@ -614,6 +633,11 @@ struct LocationSettingsView: View {
         latitude = String(manager.latitude)
         longitude = String(manager.longitude)
         selectedTimezone = manager.timezone.identifier
+    }
+    
+    private func setLocation(city: String, lat: Double, lon: Double, tz: String) {
+        manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
+        selectedTimezone = tz
     }
     
     private func useCurrentLocation() {
@@ -671,23 +695,17 @@ struct LocationSettingsView: View {
             manager.updateLocation(name: cityInput, lat: lat, lon: lon, tz: TimeZone(identifier: selectedTimezone))
         }
     }
-    
-    private func applyTimezone() {
-        if let tz = TimeZone(identifier: selectedTimezone) {
-            manager.timezone = tz
-            UserDefaults.standard.set(selectedTimezone, forKey: "timezone")
-        }
-    }
 }
 
 // MARK: - Prayer Times Settings
 struct PrayerTimesSettingsView: View {
+    weak var appDelegate: AppDelegate?
     @ObservedObject var settingsManager = SettingsManager.shared
     
     private let calculationMethods = [
         (0, "Muslim World League"),
-        (1, "Islamic Society of North America"),
-        (2, "Egyptian General Authority"),
+        (1, "ISNA"),
+        (2, "Egyptian"),
         (3, "Umm al-Qura"),
         (4, "Ministry of Religious Affairs"),
         (5, "Institute of Geophysics"),
@@ -697,29 +715,21 @@ struct PrayerTimesSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                SettingsSection(title: "Fajr & Isha Calculation Method") {
+                SettingsSection(title: "Fajr & Isha Method") {
                     Picker("Method", selection: $settingsManager.fajrIshaMethod) {
                         ForEach(calculationMethods, id: \.0) { id, name in Text(name).tag(id) }
-                    }.onChange(of: settingsManager.fajrIshaMethod) { _ in
+                    }
+                    .onChange(of: settingsManager.fajrIshaMethod) { _ in
                         NotificationCenter.default.post(name: .init("RefreshPrayerTimes"), object: nil)
                     }
                 }
                 
-                SettingsSection(title: "Asr Calculation Method") {
+                SettingsSection(title: "Asr Method") {
                     Picker("Method", selection: $settingsManager.asrMethod) {
-                        Text("Standard (Hanafi/Shafi/Malaki)").tag(AsrMethod.standard)
+                        Text("Standard").tag(AsrMethod.standard)
                         Text("Hanbali").tag(AsrMethod.hanbali)
                     }
                 }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Calculation Methods:").font(.headline).foregroundColor(.white.opacity(0.7))
-                    Text("MWL: Europe, Far East").font(.caption).foregroundColor(.white.opacity(0.5))
-                    Text("ISNA: North America").font(.caption).foregroundColor(.white.opacity(0.5))
-                    Text("Egyptian: Africa, Middle East").font(.caption).foregroundColor(.white.opacity(0.5))
-                    Text("Umm al-Qura: Saudi Arabia").font(.caption).foregroundColor(.white.opacity(0.5))
-                }.padding().frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
             }.padding()
         }
     }
