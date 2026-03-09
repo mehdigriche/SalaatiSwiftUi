@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreLocation
 
-struct Prayer: Identifiable, Equatable {
+struct Prayer: Identifiable, Codable, Equatable {
     let id = UUID()
     let name: String
     let arabicName: String
@@ -9,25 +9,37 @@ struct Prayer: Identifiable, Equatable {
     var isEnabled: Bool
     
     static func == (lhs: Prayer, rhs: Prayer) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs}
+
+struct PrayerTimes.id
+    }
+Response: Codable {
+    let timings: Timings
+}
+
+struct Timings: Codable {
+    let Fajr: String
+    let Sunrise: String
+    let Dhuhr: String
+    let Asr: String
+    let Maghrib: String
+    let Isha: String
+    
+    enum CodingKeys: String, CodingKey {
+        case Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha
     }
 }
 
 @MainActor
 class PrayerTimesManager: ObservableObject {
-    @Published var prayers: [Prayer] = [
-        Prayer(name: "Fajr", arabicName: "فجر", time: Calendar.current.date(from: DateComponents(hour: 5, minute: 30))!, isEnabled: true),
-        Prayer(name: "Dhuhr", arabicName: "ظهر", time: Calendar.current.date(from: DateComponents(hour: 12, minute: 30))!, isEnabled: true),
-        Prayer(name: "Asr", arabicName: "عصر", time: Calendar.current.date(from: DateComponents(hour: 15, minute: 45))!, isEnabled: true),
-        Prayer(name: "Maghrib", arabicName: "مغرب", time: Calendar.current.date(from: DateComponents(hour: 18, minute: 50))!, isEnabled: true),
-        Prayer(name: "Isha", arabicName: "عشاء", time: Calendar.current.date(from: DateComponents(hour: 20, minute: 15))!, isEnabled: true)
-    ]
-    
+    @Published var prayers: [Prayer] = []
     @Published var locationName: String = "Casablanca, Morocco"
     @Published var latitude: Double = 33.5731
     @Published var longitude: Double = -7.5898
     
     @Published var currentPrayerIndex: Int = 0
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String?
     
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -36,7 +48,101 @@ class PrayerTimesManager: ObservableObject {
     }()
     
     init() {
-        updateCurrentPrayer()
+        loadSavedLocation()
+        Task {
+            await fetchPrayerTimes()
+        }
+    }
+    
+    func loadSavedLocation() {
+        if let name = UserDefaults.standard.string(forKey: "locationName") {
+            locationName = name
+        }
+        if UserDefaults.standard.object(forKey: "latitude") != nil {
+            latitude = UserDefaults.standard.double(forKey: "latitude")
+            longitude = UserDefaults.standard.double(forKey: "longitude")
+        }
+    }
+    
+    func fetchPrayerTimes() async {
+        isLoading = true
+        errorMessage = nil
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "dd-MM-yyyy"
+        let dateString = dateFormatter.string(from: Date())
+        
+        let urlString = "https://api.aladhan.com/v1/timings/\(dateString)?latitude=\(latitude)&longitude=\(longitude)&method=3"
+        
+        guard let url = URL(string: urlString) else {
+            errorMessage = "Invalid URL"
+            isLoading = false
+            return
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                errorMessage = "Failed to fetch prayer times"
+                isLoading = false
+                return
+            }
+            
+            let decoder = JSONDecoder()
+            let prayerData = try decoder.decode([String: PrayerTimesResponse].self, from: data)
+            
+            guard let timings = prayerData["data"]?.timings else {
+                errorMessage = "Invalid response format"
+                isLoading = false
+                return
+            }
+            
+            let calendar = Calendar.current
+            let today = Date()
+            
+            prayers = [
+                Prayer(name: "Fajr", arabicName: "فجر", time: parseTime(timings.Fajr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Dhuhr", arabicName: "ظهر", time: parseTime(timings.Dhuhr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Asr", arabicName: "عصر", time: parseTime(timings.Asr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Maghrib", arabicName: "مغرب", time: parseTime(timings.Maghrib, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Isha", arabicName: "عشاء", time: parseTime(timings.Isha, calendar: calendar, today: today), isEnabled: true)
+            ]
+            
+            updateCurrentPrayer()
+            save()
+            
+        } catch {
+            errorMessage = "Error: \(error.localizedDescription)"
+            // Fallback to default times
+            prayers = getDefaultPrayers()
+        }
+        
+        isLoading = false
+    }
+    
+    private func parseTime(_ timeString: String, calendar: Calendar, today: Date) -> Date {
+        let components = timeString.split(separator: ":")
+        guard components.count >= 2,
+              let hour = Int(components[0]),
+              let minute = Int(components[1]) else {
+            return today
+        }
+        
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: today) ?? today
+    }
+    
+    private func getDefaultPrayers() -> [Prayer] {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        return [
+            Prayer(name: "Fajr", arabicName: "فجر", time: calendar.date(bySettingHour: 5, minute: 26, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Dhuhr", arabicName: "ظهر", time: calendar.date(bySettingHour: 12, minute: 41, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Asr", arabicName: "عصر", time: calendar.date(bySettingHour: 16, minute: 1, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHour: 18, minute: 33, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Isha", arabicName: "عشاء", time: calendar.date(bySettingHour: 19, minute: 51, second: 0, of: today)!, isEnabled: true)
+        ]
     }
     
     func updateCurrentPrayer() {
@@ -71,18 +177,20 @@ class PrayerTimesManager: ObservableObject {
         }
     }
     
-    func load() {
-        if let name = UserDefaults.standard.string(forKey: "locationName") {
-            locationName = name
-        }
-        if UserDefaults.standard.object(forKey: "latitude") != nil {
-            latitude = UserDefaults.standard.double(forKey: "latitude")
-            longitude = UserDefaults.standard.double(forKey: "longitude")
-        }
-        
+    func loadSavedPrayers() {
         if let data = UserDefaults.standard.data(forKey: "prayers"),
            let savedPrayers = try? JSONDecoder().decode([Prayer].self, from: data) {
             prayers = savedPrayers
+        }
+    }
+    
+    func updateLocation(name: String, lat: Double, lon: Double) {
+        locationName = name
+        latitude = lat
+        longitude = lon
+        save()
+        Task {
+            await fetchPrayerTimes()
         }
     }
 }
@@ -136,33 +244,55 @@ struct ContentView: View {
                     .foregroundColor(.white.opacity(0.6))
                     .padding(.bottom, 20)
                 
-                // Next prayer card
-                nextPrayerCard
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                
-                // Prayer list
-                ScrollView {
-                    VStack(spacing: 10) {
-                        ForEach($manager.prayers) { $prayer in
-                            PrayerRow(prayer: prayer, isCurrent: manager.prayers.firstIndex(where: { $0.id == prayer.id }) == manager.currentPrayerIndex)
+                if manager.isLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .scaleEffect(1.5)
+                        .padding(.vertical, 40)
+                } else if let error = manager.errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.orange)
+                        Text(error)
+                            .foregroundColor(.white.opacity(0.7))
+                        Button("Retry") {
+                            Task {
+                                await manager.fetchPrayerTimes()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(hex: "E94560"))
+                    }
+                    .padding(.vertical, 40)
+                } else {
+                    // Next prayer card
+                    nextPrayerCard
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                    
+                    // Prayer list
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            ForEach($manager.prayers) { $prayer in
+                                PrayerRow(
+                                    prayer: prayer,
+                                    isCurrent: manager.prayers.firstIndex(where: { $0.id == prayer.id }) == manager.currentPrayerIndex
+                                )
                                 .onTapGesture {
                                     prayer.isEnabled.toggle()
                                     manager.save()
                                 }
+                            }
                         }
+                        .padding(.horizontal, 24)
                     }
-                    .padding(.horizontal, 24)
                 }
             }
         }
         .frame(minWidth: 400, minHeight: 500)
         .sheet(isPresented: $showingSettings) {
             SettingsView(manager: manager)
-        }
-        .onAppear {
-            manager.load()
-            manager.updateCurrentPrayer()
         }
     }
     
@@ -276,6 +406,21 @@ struct SettingsView: View {
     @State private var locationName: String = ""
     @State private var latitude: String = ""
     @State private var longitude: String = ""
+    @State private var isFetchingLocation: Bool = false
+    
+    // Popular locations
+    private let popularLocations = [
+        ("Casablanca, Morocco", 33.5731, -7.5898),
+        ("Rabat, Morocco", 34.0209, -6.8416),
+        ("Marrakech, Morocco", 31.6295, -7.9811),
+        ("Fes, Morocco", 34.0181, -5.0078),
+        ("Tangier, Morocco", 35.7595, -5.8340),
+        ("London, UK", 51.5074, -0.1278),
+        ("Paris, France", 48.8566, 2.3522),
+        ("Dubai, UAE", 25.2048, 55.2708),
+        ("Istanbul, Turkey", 41.0082, 28.9784),
+        ("New York, USA", 40.7128, -74.0060)
+    ]
     
     var body: some View {
         VStack(spacing: 0) {
@@ -309,9 +454,43 @@ struct SettingsView: View {
                         TextField("Longitude", text: $longitude)
                             .textFieldStyle(.roundedBorder)
                     }
+                    
+                    Button(action: fetchCurrentLocation) {
+                        HStack {
+                            if isFetchingLocation {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "location.fill")
+                            }
+                            Text("Use Current Location")
+                        }
+                    }
+                    .disabled(isFetchingLocation)
                 }
                 
-                Section("Prayer Times") {
+                Section("Popular Locations") {
+                    ForEach(popularLocations, id: \.0) { name, lat, lon in
+                        Button(action: {
+                            locationName = name
+                            latitude = String(lat)
+                            longitude = String(lon)
+                        }) {
+                            HStack {
+                                Text(name)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if locationName == name {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(Color(hex: "E94560"))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                Section("Prayer Times (Manual Override)") {
                     ForEach($manager.prayers) { $prayer in
                         HStack {
                             VStack(alignment: .leading) {
@@ -331,15 +510,17 @@ struct SettingsView: View {
                 }
                 
                 Section {
-                    Button("Reset to Default Times") {
-                        resetToDefaults()
+                    Button("Reset to Default Location") {
+                        locationName = "Casablanca, Morocco"
+                        latitude = "33.5731"
+                        longitude = "-7.5898"
                     }
                     .foregroundColor(.red)
                 }
             }
             .formStyle(.grouped)
         }
-        .frame(width: 450, height: 550)
+        .frame(width: 450, height: 600)
         .onAppear {
             loadSettings()
         }
@@ -351,27 +532,41 @@ struct SettingsView: View {
         longitude = String(manager.longitude)
     }
     
-    private func saveAndClose() {
-        manager.locationName = locationName
-        if let lat = Double(latitude) {
-            manager.latitude = lat
+    private func fetchCurrentLocation() {
+        isFetchingLocation = true
+        
+        // Simple geocoding using a free API
+        Task {
+            // Using ipapi for location
+            if let url = URL(string: "http://ipapi.co/json/"),
+               let (data, _) = try? await URLSession.shared.data(from: url) {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let city = json["city"] as? String,
+                   let country = json["country_name"] as? String,
+                   let lat = json["latitude"] as? Double,
+                   let lon = json["longitude"] as? Double {
+                    
+                    await MainActor.run {
+                        locationName = "\(city), \(country)"
+                        latitude = String(lat)
+                        longitude = String(lon)
+                        isFetchingLocation = false
+                    }
+                    return
+                }
+            }
+            
+            await MainActor.run {
+                isFetchingLocation = false
+            }
         }
-        if let lon = Double(longitude) {
-            manager.longitude = lon
-        }
-        manager.save()
-        dismiss()
     }
     
-    private func resetToDefaults() {
-        manager.prayers = [
-            Prayer(name: "Fajr", arabicName: "فجر", time: Calendar.current.date(from: DateComponents(hour: 5, minute: 30))!, isEnabled: true),
-            Prayer(name: "Dhuhr", arabicName: "ظهر", time: Calendar.current.date(from: DateComponents(hour: 12, minute: 30))!, isEnabled: true),
-            Prayer(name: "Asr", arabicName: "عصر", time: Calendar.current.date(from: DateComponents(hour: 15, minute: 45))!, isEnabled: true),
-            Prayer(name: "Maghrib", arabicName: "مغرب", time: Calendar.current.date(from: DateComponents(hour: 18, minute: 50))!, isEnabled: true),
-            Prayer(name: "Isha", arabicName: "عشاء", time: Calendar.current.date(from: DateComponents(hour: 20, minute: 15))!, isEnabled: true)
-        ]
-        manager.save()
+    private func saveAndClose() {
+        if let lat = Double(latitude), let lon = Double(longitude) {
+            manager.updateLocation(name: locationName, lat: lat, lon: lon)
+        }
+        dismiss()
     }
 }
 
