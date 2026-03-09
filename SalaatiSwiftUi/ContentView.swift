@@ -2,18 +2,26 @@ import SwiftUI
 import CoreLocation
 
 struct Prayer: Identifiable, Codable, Equatable {
-    let id = UUID()
+    let id: UUID
     let name: String
     let arabicName: String
     var time: Date
     var isEnabled: Bool
     
-    static func == (lhs: Prayer, rhs: Prayer) -> Bool {
-        lhs.id == rhs}
-
-struct PrayerTimes.id
+    init(id: UUID = UUID(), name: String, arabicName: String, time: Date, isEnabled: Bool) {
+        self.id = id
+        self.name = name
+        self.arabicName = arabicName
+        self.time = time
+        self.isEnabled = isEnabled
     }
-Response: Codable {
+    
+    static func == (lhs: Prayer, rhs: Prayer) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+struct PrayerTimesResponse: Codable {
     let timings: Timings
 }
 
@@ -81,13 +89,7 @@ class PrayerTimesManager: ObservableObject {
         }
         
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                errorMessage = "Failed to fetch prayer times"
-                isLoading = false
-                return
-            }
+            let (data, _) = try await URLSession.shared.data(from: url)
             
             let decoder = JSONDecoder()
             let prayerData = try decoder.decode([String: PrayerTimesResponse].self, from: data)
@@ -114,7 +116,6 @@ class PrayerTimesManager: ObservableObject {
             
         } catch {
             errorMessage = "Error: \(error.localizedDescription)"
-            // Fallback to default times
             prayers = getDefaultPrayers()
         }
         
@@ -201,7 +202,6 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // Background gradient
             LinearGradient(
                 gradient: Gradient(colors: [
                     Color(hex: "1A1A2E"),
@@ -214,7 +214,6 @@ struct ContentView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header with settings button
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Salaati")
@@ -266,12 +265,10 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 40)
                 } else {
-                    // Next prayer card
                     nextPrayerCard
                         .padding(.horizontal, 24)
                         .padding(.bottom, 24)
                     
-                    // Prayer list
                     ScrollView {
                         VStack(spacing: 10) {
                             ForEach($manager.prayers) { $prayer in
@@ -408,7 +405,6 @@ struct SettingsView: View {
     @State private var longitude: String = ""
     @State private var isFetchingLocation: Bool = false
     
-    // Popular locations
     private let popularLocations = [
         ("Casablanca, Morocco", 33.5731, -7.5898),
         ("Rabat, Morocco", 34.0209, -6.8416),
@@ -424,7 +420,6 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
                 Text("Settings")
                     .font(.title2.bold())
@@ -535,9 +530,7 @@ struct SettingsView: View {
     private func fetchCurrentLocation() {
         isFetchingLocation = true
         
-        // Simple geocoding using a free API
         Task {
-            // Using ipapi for location
             if let url = URL(string: "http://ipapi.co/json/"),
                let (data, _) = try? await URLSession.shared.data(from: url) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -570,7 +563,6 @@ struct SettingsView: View {
     }
 }
 
-// Color extension for hex colors
 extension Color {
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
