@@ -8,11 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		503D8FACD5081D8CD2D83251 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FFDAB196235A3B6DCE2A8A /* ContentView.swift */; };
-		86835AE5634436449FBE1C55 /* SalaatiSwiftUiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62126BCC0D86EA1B59445C36 /* SalaatiSwiftUiApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		62126BCC0D86EA1B59445C36 /* SalaatiSwiftUiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SalaatiSwiftUiApp.swift; sourceTree = "<group>"; };
+		3BBDCAE21950617A8C7462CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		78FFDAB196235A3B6DCE2A8A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		C8191153A8676D202B618C45 /* SalaatiSwiftUi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SalaatiSwiftUi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -30,7 +29,7 @@
 			isa = PBXGroup;
 			children = (
 				78FFDAB196235A3B6DCE2A8A /* ContentView.swift */,
-				62126BCC0D86EA1B59445C36 /* SalaatiSwiftUiApp.swift */,
+				3BBDCAE21950617A8C7462CD /* Info.plist */,
 			);
 			path = SalaatiSwiftUi;
 			sourceTree = "<group>";
@@ -103,7 +102,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				503D8FACD5081D8CD2D83251 /* ContentView.swift in Sources */,
-				86835AE5634436449FBE1C55 /* SalaatiSwiftUiApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,14 +116,14 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SalaatiSwiftUi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Salaati;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.salaati.app;
 				SDKROOT = macosx;
 			};
@@ -182,8 +180,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				INFOPLIST_FILE = SalaatiSwiftUi/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -240,8 +238,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				INFOPLIST_FILE = SalaatiSwiftUi/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -260,14 +258,14 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SalaatiSwiftUi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Salaati;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.salaati.app;
 				SDKROOT = macosx;
 			};

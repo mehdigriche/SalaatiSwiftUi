@@ -1,5 +1,94 @@
 import SwiftUI
-import CoreLocation
+import AppKit
+import UserNotifications
+
+// MARK: - App Entry Point
+@main
+struct SalaatiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
+    var body: some Scene {
+        Settings {
+            EmptyView()
+        }
+    }
+}
+
+// MARK: - App Delegate
+@MainActor
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
+    var popover: NSPopover!
+    var timer: Timer?
+    var prayerManager = PrayerTimesManager()
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupStatusItem()
+        setupPopover()
+        startTimer()
+        
+        // Request notification permission
+        NotificationManager.shared.requestPermission()
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+    }
+    
+    private func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "moon.stars.fill", accessibilityDescription: "Salaati")
+            button.action = #selector(togglePopover)
+            button.target = self
+        }
+        
+        updateStatusItemTitle()
+    }
+    
+    private func setupPopover() {
+        popover = NSPopover()
+        popover.contentSize = NSSize(width: 360, height: 520)
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager))
+    }
+    
+    private func startTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateStatusItemTitle()
+                self?.prayerManager.updateCurrentPrayer()
+            }
+        }
+    }
+    
+    private func updateStatusItemTitle() {
+        guard let button = statusItem.button else { return }
+        
+        let nextPrayer = prayerManager.getNextPrayer()
+        if let prayer = nextPrayer {
+            let remaining = prayerManager.timeRemaining()
+            button.title = " \(prayer.name) \(remaining)"
+            button.imagePosition = .imageLeading
+        } else {
+            button.title = " Done"
+            button.imagePosition = .imageLeading
+        }
+    }
+    
+    @objc func togglePopover() {
+        guard let button = statusItem.button else { return }
+        
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+}
 
 // MARK: - Models
 struct Prayer: Identifiable, Codable, Equatable {
@@ -27,12 +116,12 @@ struct PrayerTimesResponse: Codable {
 }
 
 struct Timings: Codable {
-    let Fajr: String
-    let Sunrise: String
-    let Dhuhr: String
-    let Asr: String
-    let Maghrib: String
-    let Isha: String
+    let fajr: String
+    let sunrise: String
+    let dhuhr: String
+    let asr: String
+    let maghrib: String
+    let isha: String
 }
 
 // MARK: - Prayer Times Manager
@@ -44,7 +133,6 @@ class PrayerTimesManager: ObservableObject {
     @Published var longitude: Double = -7.5898
     @Published var currentPrayerIndex: Int = 0
     @Published var isLoading: Bool = false
-    @Published var errorMessage: String?
     @Published var hijriDate: String = ""
     
     init() {
@@ -64,7 +152,6 @@ class PrayerTimesManager: ObservableObject {
     
     func fetchPrayerTimes() async {
         isLoading = true
-        errorMessage = nil
         
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM-yyyy"
@@ -73,20 +160,15 @@ class PrayerTimesManager: ObservableObject {
         let urlString = "https://api.aladhan.com/v1/timings/\(dateString)?latitude=\(latitude)&longitude=\(longitude)&method=3"
         
         guard let url = URL(string: urlString) else {
-            errorMessage = "Invalid URL"
             isLoading = false
             return
         }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            let prayerData = try JSONDecoder().decode([String: AnyCodable].self, from: data)
+            let response = try JSONDecoder().decode(AlAdhanResponse.self, from: data)
             
-            guard let dataObj = prayerData["data"],
-                  let dataDict = dataObj.value as? [String: Any],
-                  let timingsAny = dataDict["timings"],
-                  let timingsDict = timingsAny as? [String: String] else {
-                errorMessage = "Invalid response format"
+            guard let timings = response.data.timings else {
                 isLoading = false
                 return
             }
@@ -95,29 +177,22 @@ class PrayerTimesManager: ObservableObject {
             let today = Date()
             
             // Get Hijri date
-            if let dateAny = dataDict["date"],
-               let dateDict = dateAny as? [String: Any],
-               let hijriAny = dateDict["hijri"],
-               let hijriDict = hijriAny as? [String: Any] {
-                let day = hijriDict["day"] as? String ?? ""
-                let month = (hijriDict["month"] as? [String: Any])?["ar"] as? String ?? ""
-                let year = hijriDict["year"] as? String ?? ""
-                hijriDate = "\(day) \(month) \(year)"
-            }
+            hijriDate = "\(response.data.date.hijri.day) \(response.data.date.hijri.month.ar) \(response.data.date.hijri.year)"
             
             prayers = [
-                Prayer(name: "Fajr", arabicName: "فجر", time: parseTime(timingsDict["Fajr"] ?? "05:26", calendar: calendar, today: today), isEnabled: true),
-                Prayer(name: "Sunrise", arabicName: "شروق", time: parseTime(timingsDict["Sunrise"] ?? "06:00", calendar: calendar, today: today), isEnabled: false),
-                Prayer(name: "Dhuhr", arabicName: "ظهر", time: parseTime(timingsDict["Dhuhr"] ?? "12:00", calendar: calendar, today: today), isEnabled: true),
-                Prayer(name: "Asr", arabicName: "عصر", time: parseTime(timingsDict["Asr"] ?? "15:00", calendar: calendar, today: today), isEnabled: true),
-                Prayer(name: "Maghrib", arabicName: "مغرب", time: parseTime(timingsDict["Maghrib"] ?? "18:00", calendar: calendar, today: today), isEnabled: true),
-                Prayer(name: "Isha", arabicName: "عشاء", time: parseTime(timingsDict["Isha"] ?? "20:00", calendar: calendar, today: today), isEnabled: true)
+                Prayer(name: "Fajr", arabicName: "فجر", time: parseTime(timings.fajr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Sunrise", arabicName: "شروق", time: parseTime(timings.sunrise, calendar: calendar, today: today), isEnabled: false),
+                Prayer(name: "Dhuhr", arabicName: "ظهر", time: parseTime(timings.dhuhr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Asr", arabicName: "عصر", time: parseTime(timings.asr, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Maghrib", arabicName: "مغرب", time: parseTime(timings.maghrib, calendar: calendar, today: today), isEnabled: true),
+                Prayer(name: "Isha", arabicName: "عشاء", time: parseTime(timings.isha, calendar: calendar, today: today), isEnabled: true)
             ]
             
             updateCurrentPrayer()
             save()
+            scheduleNotifications()
+            
         } catch {
-            errorMessage = "Error: \(error.localizedDescription)"
             prayers = getDefaultPrayers()
         }
         
@@ -156,6 +231,11 @@ class PrayerTimesManager: ObservableObject {
         currentPrayerIndex = max(0, prayers.count - 1)
     }
     
+    func getNextPrayer() -> Prayer? {
+        let now = Date()
+        return prayers.first(where: { $0.time > now && $0.isEnabled })
+    }
+    
     func timeRemaining() -> String {
         let now = Date()
         if let nextPrayer = prayers.first(where: { $0.time > now && $0.isEnabled }) {
@@ -171,9 +251,6 @@ class PrayerTimesManager: ObservableObject {
         UserDefaults.standard.set(locationName, forKey: "locationName")
         UserDefaults.standard.set(latitude, forKey: "latitude")
         UserDefaults.standard.set(longitude, forKey: "longitude")
-        if let data = try? JSONEncoder().encode(prayers) {
-            UserDefaults.standard.set(data, forKey: "prayers")
-        }
     }
     
     func updateLocation(name: String, lat: Double, lon: Double) {
@@ -183,123 +260,40 @@ class PrayerTimesManager: ObservableObject {
         save()
         Task { await fetchPrayerTimes() }
     }
-}
-
-// MARK: - AnyCodable
-// MARK: - AnyCodable
-struct AnyCodable: Codable {
-    let value: Any
     
-    init(_ value: Any) { self.value = value }
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let dict = try? container.decode([String: AnyCodable].self) {
-            value = dict.mapValues { $0.value }
-        } else if let array = try? container.decode([AnyCodable].self) {
-            value = array.map { $0.value }
-        } else if let string = try? container.decode(String.self) {
-            value = string
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else {
-            value = NSNull()
-        }
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        if let dict = value as? [String: Any] {
-            try container.encode(dict.mapValues { AnyCodable($0) })
-        } else if let array = value as? [Any] {
-            try container.encode(array.map { AnyCodable($0) })
-        } else if let string = value as? String {
-            try container.encode(string)
-        } else if let int = value as? Int {
-            try container.encode(int)
-        } else if let double = value as? Double {
-            try container.encode(double)
-        } else if let bool = value as? Bool {
-            try container.encode(bool)
-        }
+    private func scheduleNotifications() {
+        NotificationManager.shared.schedulePrayerNotifications(prayers: prayers, locationName: locationName)
     }
 }
 
-// MARK: - Tab Enum
-enum AppTab: String, CaseIterable {
-    case home = "Home"
-    case qibla = "Qibla"
-    case quran = "Quran"
-    case dua = "Dua"
-    case settings = "Settings"
-    
-    var icon: String {
-        switch self {
-        case .home: return "house.fill"
-        case .qibla: return "safari.fill"
-        case .quran: return "book.closed.fill"
-        case .dua: return "hands.sparkles.fill"
-        case .settings: return "gearshape.fill"
-        }
-    }
+// MARK: - Al-Adhan API Response Models
+struct AlAdhanResponse: Codable {
+    let data: AlAdhanData
 }
 
-// MARK: - Main App View
-struct SalaatiApp: View {
-    @State private var selectedTab: AppTab = .home
-    
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Group {
-                switch selectedTab {
-                case .home: HomeView()
-                case .qibla: QiblaView()
-                case .quran: QuranView()
-                case .dua: DuaView()
-                case .settings: SettingsTabView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            bottomNavBar
-        }
-        .ignoresSafeArea(.keyboard)
-    }
-    
-    private var bottomNavBar: some View {
-        HStack(spacing: 0) {
-            ForEach(AppTab.allCases, id: \.self) { tab in
-                Button(action: { selectedTab = tab }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 20))
-                        Text(tab.rawValue)
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(selectedTab == tab ? Color(hex: "E94560") : .gray)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                }
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(hex: "1A1A2E"))
-                .shadow(color: .black.opacity(0.3), radius: 10, y: -5)
-        )
-        .padding(.horizontal)
-    }
+struct AlAdhanData: Codable {
+    let timings: Timings?
+    let date: DateInfo
 }
 
-// MARK: - Home View
-struct HomeView: View {
-    @StateObject private var manager = PrayerTimesManager()
+struct DateInfo: Codable {
+    let hijri: HijriDate
+}
+
+struct HijriDate: Codable {
+    let day: String
+    let month: HijriMonth
+    let year: String
+}
+
+struct HijriMonth: Codable {
+    let ar: String
+}
+
+// MARK: - Menu Bar Popover View
+struct MenuBarPopoverView: View {
+    @ObservedObject var manager: PrayerTimesManager
+    @State private var showingSettings = false
     
     var body: some View {
         ZStack {
@@ -310,125 +304,179 @@ struct HomeView: View {
             )
             .ignoresSafeArea()
             
-            ScrollView {
-                VStack(spacing: 16) {
-                    // Location & Date Header
-                    VStack(spacing: 4) {
-                        HStack {
-                            Image(systemName: "location.fill").font(.caption)
-                            Text(manager.locationName).font(.subheadline)
-                        }
-                        .foregroundColor(.white.opacity(0.7))
-                        
-                        if !manager.hijriDate.isEmpty {
-                            Text(manager.hijriDate)
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Text(formattedDate())
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.5))
-                    }
-                    .padding(.top, 20)
-                    
-                    // Next Prayer Card
-                    if !manager.prayers.isEmpty {
-                        nextPrayerCard
-                    }
-                    
-                    // Prayer Times List
-                    if !manager.prayers.isEmpty {
-                        prayerTimesList
-                    }
-                    
-                    if manager.isLoading {
-                        ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)).padding(.top, 40)
-                    }
+            VStack(spacing: 0) {
+                headerView
+                
+                if !manager.prayers.isEmpty {
+                    nextPrayerCard
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 80)
+                
+                if !manager.prayers.isEmpty {
+                    prayerTimesList
+                }
+                
+                footerView
             }
         }
+        .frame(width: 360, height: 520)
+    }
+    
+    private var headerView: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Image(systemName: "location.fill").font(.caption)
+                Text(manager.locationName)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(.white.opacity(0.7))
+            
+            if !manager.hijriDate.isEmpty {
+                Text(manager.hijriDate)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            
+            Text(formattedDate())
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.5))
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 8)
     }
     
     private var nextPrayerCard: some View {
         let enabledPrayers = manager.prayers.filter { $0.isEnabled }
-        guard let currentIndex = enabledPrayers.firstIndex(where: { $0.time > Date() }),
-              currentIndex < enabledPrayers.count else {
-            return AnyView(emptyCard)
+        guard let nextPrayer = enabledPrayers.first(where: { $0.time > Date() }) else {
+            return AnyView(VStack {
+                Text("All prayers completed")
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.1))
+            ))
         }
         
-        let nextPrayer = enabledPrayers[currentIndex]
-        
-        return AnyView(VStack(spacing: 8) {
-            Text("Next Prayer").font(.subheadline).foregroundColor(.white.opacity(0.7))
+        return AnyView(VStack(spacing: 4) {
+            Text("Next Prayer")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.6))
             
             Text(nextPrayer.name)
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundColor(Color(hex: "E94560"))
             
             Text(nextPrayer.arabicName)
-                .font(.system(size: 18))
-                .foregroundColor(.white.opacity(0.8))
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.7))
             
             Text(manager.timeRemaining())
-                .font(.system(size: 28, weight: .bold, design: .monospaced))
+                .font(.system(size: 20, weight: .bold, design: .monospaced))
                 .foregroundColor(.white)
             
-            Text("at \(timeFormatter.string(from: nextPrayer.time))")
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.6))
+            Text(timeFormatter.string(from: nextPrayer.time))
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 16)
         .background(
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white.opacity(0.1))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.2), lineWidth: 1))
-        ))
-    }
-    
-    private var emptyCard: some View {
-        AnyView(VStack {
-            Text("All prayers completed")
-                .foregroundColor(.white.opacity(0.7))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color(hex: "E94560").opacity(0.3), lineWidth: 1)
+                )
         ))
     }
     
     private var prayerTimesList: some View {
-        VStack(spacing: 8) {
-            ForEach(manager.prayers) { prayer in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(prayer.name)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.white)
-                        Text(prayer.arabicName)
-                            .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.6))
+        ScrollView {
+            VStack(spacing: 6) {
+                ForEach(manager.prayers) { prayer in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(prayer.name)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(prayer.isEnabled ? .white : .white.opacity(0.4))
+                            Text(prayer.arabicName)
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        
+                        Spacer()
+                        
+                        Text(timeFormatter.string(from: prayer.time))
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundColor(prayer.isEnabled ? .white : .white.opacity(0.4))
                     }
-                    
-                    Spacer()
-                    
-                    Text(timeFormatter.string(from: prayer.time))
-                        .font(.system(size: 16, weight: .medium, design: .monospaced))
-                        .foregroundColor(prayer.isEnabled ? .white : .white.opacity(0.4))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(isCurrentPrayer(prayer) ? Color(hex: "E94560").opacity(0.15) : Color.white.opacity(0.03))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isCurrentPrayer(prayer) ? Color(hex: "E94560").opacity(0.5) : Color.clear, lineWidth: 1)
+                    )
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(prayer.isEnabled ? Color.white.opacity(0.1) : Color.white.opacity(0.03))
-                )
             }
+            .padding(.horizontal, 12)
         }
+    }
+    
+    private var footerView: some View {
+        HStack(spacing: 20) {
+            Button(action: { showingSettings = true }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "gearshape")
+                    Text("Settings")
+                }
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                Task { await manager.fetchPrayerTimes() }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                    Text("Refresh")
+                }
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                NSApplication.shared.terminate(nil)
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "power")
+                    Text("Quit")
+                }
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(Color.black.opacity(0.2))
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(manager: manager)
+        }
+    }
+    
+    private func isCurrentPrayer(_ prayer: Prayer) -> Bool {
+        guard let index = manager.prayers.firstIndex(where: { $0.id == prayer.id }) else { return false }
+        return index == manager.currentPrayerIndex
     }
     
     private func formattedDate() -> String {
@@ -444,216 +492,155 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Qibla View
-struct QiblaView: View {
-    @State private var degrees: Double = 0
+// MARK: - Settings View
+struct SettingsView: View {
+    @ObservedObject var manager: PrayerTimesManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var locationName: String = ""
+    @State private var latitude: String = ""
+    @State private var longitude: String = ""
     
-    var body: some View {
-        ZStack {
-            LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            
-            VStack(spacing: 30) {
-                Text("Qibla").font(.system(size: 28, weight: .bold)).foregroundColor(.white)
-                
-                ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.2), lineWidth: 2)
-                        .frame(width: 250, height: 250)
-                    
-                    Circle()
-                        .stroke(Color(hex: "E94560"), lineWidth: 3)
-                        .frame(width: 200, height: 200)
-                    
-                    Image(systemName: "location.north.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(Color(hex: "E94560"))
-                        .rotationEffect(.degrees(degrees))
-                }
-                
-                VStack(spacing: 8) {
-                    Text("Direction").font(.subheadline).foregroundColor(.white.opacity(0.7))
-                    Text("95°").font(.system(size: 32, weight: .bold)).foregroundColor(.white)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Quran View
-struct QuranView: View {
-    let surahs = [
-        ("الفاتحه", "Al-Fatiha", 7),
-        ("البقره", "Al-Baqarah", 286),
-        ("ال عمران", "Ali Imran", 200),
-        ("النساء", "An-Nisa", 176),
-        ("المائده", "Al-Ma'idah", 120),
-        ("الانعام", "Al-An'am", 165),
-        ("الاعراف", "Al-A'raf", 206),
-        ("الانفال", "Al-Anfal", 75),
-        ("التوبه", "At-Tawbah", 129),
-        ("يونس", "Yunus", 109)
+    private let popularLocations = [
+        ("Casablanca, Morocco", 33.5731, -7.5898),
+        ("Rabat, Morocco", 34.0209, -6.8416),
+        ("Marrakech, Morocco", 31.6295, -7.9811),
+        ("London, UK", 51.5074, -0.1278),
+        ("Paris, France", 48.8566, 2.3522),
+        ("Dubai, UAE", 25.2048, 55.2708),
+        ("Istanbul, Turkey", 41.0082, 28.9784)
     ]
     
     var body: some View {
         ZStack {
-            LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            
-            ScrollView {
-                VStack(spacing: 8) {
-                    Text("Quran")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.vertical, 20)
-                    
-                    ForEach(0..<surahs.count, id: \.self) { index in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(surahs[index].0)
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundColor(.white)
-                                Text(surahs[index].1)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                            Spacer()
-                            Text("\(surahs[index].2) verses")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.5))
-                        }
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.05))
-                        )
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 80)
-            }
-        }
-    }
-}
-
-// MARK: - Dua View
-struct DuaView: View {
-    let duas = [
-        ("دعاء الاستخاره", "Istikhara Prayer", "اللهم اني استخيرك بعلمك"),
-        ("دعاء الصباح", "Morning Prayer", "اللهم بك أصبحنا"),
-        ("دعاء المساء", "Evening Prayer", "اللهم بك أمسيت"),
-        ("دعاء قبل النوم", "Before Sleep", "باسمك اللهم أموت وأحيا"),
-        ("دعاء دخول المسجد", "Entering Mosque", "اللهم افتح لي أبواب رحمتك")
-    ]
-    
-    var body: some View {
-        ZStack {
-            LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            
-            ScrollView {
-                VStack(spacing: 8) {
-                    Text("Duas")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.vertical, 20)
-                    
-                    ForEach(0..<duas.count, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(duas[index].0)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(Color(hex: "E94560"))
-                            Text(duas[index].1)
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.6))
-                            Text(duas[index].2)
-                                .font(.system(size: 14))
-                                .foregroundColor(.white)
-                                .padding(.top, 4)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.05))
-                        )
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 80)
-            }
-        }
-    }
-}
-
-// MARK: - Settings Tab View
-struct SettingsTabView: View {
-    @StateObject private var manager = PrayerTimesManager()
-    
-    var body: some View {
-        ZStack {
-            LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+            Color(hex: "1A1A2E").ignoresSafeArea()
             
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("Settings")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.top, 20)
-                        .padding(.bottom, 10)
+                    HStack {
+                        Text("Settings")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        Spacer()
+                        Button("Done") { dismiss() }
+                            .foregroundColor(Color(hex: "E94560"))
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 20)
                     
-                    // Location Section
-                    SettingsSection(title: "Location") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(manager.locationName)
-                                .font(.system(size: 16))
-                                .foregroundColor(.white)
-                            Text("Lat: \(String(format: "%.4f", manager.latitude)), Lon: \(String(format: "%.4f", manager.longitude))")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.6))
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Location")
+                            .font(.headline)
+                            .foregroundColor(.white.opacity(0.7))
+                        
+                        TextField("Location Name", text: $locationName)
+                            .textFieldStyle(.roundedBorder)
+                        
+                        HStack {
+                            TextField("Latitude", text: $latitude)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Longitude", text: $longitude)
+                                .textFieldStyle(.roundedBorder)
                         }
                     }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.05))
+                    )
+                    .padding(.horizontal)
                     
-                    // Calculation Method
-                    SettingsSection(title: "Calculation Method") {
-                        Text("Muslim World League")
-                            .foregroundColor(.white.opacity(0.8))
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Popular Locations")
+                            .font(.headline)
+                            .foregroundColor(.white.opacity(0.7))
+                        
+                        ForEach(popularLocations, id: \.0) { name, lat, lon in
+                            Button(action: {
+                                locationName = name
+                                latitude = String(lat)
+                                longitude = String(lon)
+                            }) {
+                                HStack {
+                                    Text(name)
+                                        .foregroundColor(.white)
+                                    Spacer()
+                                    if locationName == name {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(Color(hex: "E94560"))
+                                    }
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.05))
+                    )
+                    .padding(.horizontal)
                     
-                    // Notifications
-                    SettingsSection(title: "Notifications") {
-                        Toggle("Enable Notifications", isOn: .constant(true))
-                            .tint(Color(hex: "E94560"))
-                            .foregroundColor(.white)
-                    }
-                    
-                    Spacer(minLength: 80)
+                    Spacer()
                 }
-                .padding(.horizontal)
             }
         }
+        .frame(width: 350, height: 450)
+        .onAppear { loadSettings() }
+    }
+    
+    private func loadSettings() {
+        locationName = manager.locationName
+        latitude = String(manager.latitude)
+        longitude = String(manager.longitude)
     }
 }
 
-struct SettingsSection<Content: View>: View {
-    let title: String
-    let content: Content
+// MARK: - Notification Manager
+class NotificationManager {
+    static let shared = NotificationManager()
+    private init() {}
     
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
+    func requestPermission() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                print("Notification permission error: \(error)")
+            }
+        }
     }
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
-            content
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.05))
-                )
+    func schedulePrayerNotifications(prayers: [Prayer], locationName: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        
+        for prayer in prayers where prayer.isEnabled {
+            let content = UNMutableNotificationContent()
+            content.title = "Time for \(prayer.name)"
+            content.body = "\(prayer.name) - \(prayer.arabicName) at \(timeString(from: prayer.time))"
+            content.sound = .default
+            
+            let calendar = Calendar.current
+            let components = calendar.dateComponents([.hour, .minute], from: prayer.time)
+            var dateComponents = DateComponents()
+            dateComponents.hour = components.hour
+            dateComponents.minute = components.minute
+            
+            let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+            let request = UNNotificationRequest(identifier: prayer.id.uuidString, content: content, trigger: trigger)
+            
+            center.add(request) { error in
+                if let error = error {
+                    print("Error scheduling notification: \(error)")
+                }
+            }
         }
+    }
+    
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "hh:mm a"
+        return formatter.string(from: date)
     }
 }
 
@@ -672,9 +659,4 @@ extension Color {
         }
         self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: Double(a) / 255)
     }
-}
-
-// MARK: - Preview
-#Preview {
-    SalaatiApp()
 }
