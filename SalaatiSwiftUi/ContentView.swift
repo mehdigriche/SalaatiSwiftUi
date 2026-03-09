@@ -32,10 +32,6 @@ struct Timings: Codable {
     let Asr: String
     let Maghrib: String
     let Isha: String
-    
-    enum CodingKeys: String, CodingKey {
-        case Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha
-    }
 }
 
 @MainActor
@@ -44,22 +40,13 @@ class PrayerTimesManager: ObservableObject {
     @Published var locationName: String = "Casablanca, Morocco"
     @Published var latitude: Double = 33.5731
     @Published var longitude: Double = -7.5898
-    
     @Published var currentPrayerIndex: Int = 0
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     
-    private let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "hh:mm a"
-        return formatter
-    }()
-    
     init() {
         loadSavedLocation()
-        Task {
-            await fetchPrayerTimes()
-        }
+        Task { await fetchPrayerTimes() }
     }
     
     func loadSavedLocation() {
@@ -90,9 +77,7 @@ class PrayerTimesManager: ObservableObject {
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            
-            let decoder = JSONDecoder()
-            let prayerData = try decoder.decode([String: PrayerTimesResponse].self, from: data)
+            let prayerData = try JSONDecoder().decode([String: PrayerTimesResponse].self, from: data)
             
             guard let timings = prayerData["data"]?.timings else {
                 errorMessage = "Invalid response format"
@@ -113,7 +98,6 @@ class PrayerTimesManager: ObservableObject {
             
             updateCurrentPrayer()
             save()
-            
         } catch {
             errorMessage = "Error: \(error.localizedDescription)"
             prayers = getDefaultPrayers()
@@ -126,17 +110,13 @@ class PrayerTimesManager: ObservableObject {
         let components = timeString.split(separator: ":")
         guard components.count >= 2,
               let hour = Int(components[0]),
-              let minute = Int(components[1]) else {
-            return today
-        }
-        
+              let minute = Int(components[1]) else { return today }
         return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: today) ?? today
     }
     
     private func getDefaultPrayers() -> [Prayer] {
         let calendar = Calendar.current
         let today = Date()
-        
         return [
             Prayer(name: "Fajr", arabicName: "فجر", time: calendar.date(bySettingHour: 5, minute: 26, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Dhuhr", arabicName: "ظهر", time: calendar.date(bySettingHour: 12, minute: 41, second: 0, of: today)!, isEnabled: true),
@@ -154,7 +134,7 @@ class PrayerTimesManager: ObservableObject {
                 return
             }
         }
-        currentPrayerIndex = prayers.count - 1
+        currentPrayerIndex = max(0, prayers.count - 1)
     }
     
     func timeRemaining() -> String {
@@ -172,7 +152,6 @@ class PrayerTimesManager: ObservableObject {
         UserDefaults.standard.set(locationName, forKey: "locationName")
         UserDefaults.standard.set(latitude, forKey: "latitude")
         UserDefaults.standard.set(longitude, forKey: "longitude")
-        
         if let data = try? JSONEncoder().encode(prayers) {
             UserDefaults.standard.set(data, forKey: "prayers")
         }
@@ -190,9 +169,7 @@ class PrayerTimesManager: ObservableObject {
         latitude = lat
         longitude = lon
         save()
-        Task {
-            await fetchPrayerTimes()
-        }
+        Task { await fetchPrayerTimes() }
     }
 }
 
@@ -203,125 +180,90 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(hex: "1A1A2E"),
-                    Color(hex: "16213E"),
-                    Color(hex: "0F3460")
-                ]),
+                gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E"), Color(hex: "0F3460")]),
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Salaati")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                        
-                        Text(manager.locationName)
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.7))
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: { showingSettings = true }) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.title2)
-                            .foregroundColor(.white.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .padding(.bottom, 16)
-                
-                Text(formattedDate())
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.6))
-                    .padding(.bottom, 20)
+                headerView
+                Text(formattedDate()).font(.subheadline).foregroundColor(.white.opacity(0.6)).padding(.bottom, 20)
                 
                 if manager.isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.5)
-                        .padding(.vertical, 40)
+                    loadingView
                 } else if let error = manager.errorMessage {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .foregroundColor(.white.opacity(0.7))
-                        Button("Retry") {
-                            Task {
-                                await manager.fetchPrayerTimes()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color(hex: "E94560"))
-                    }
-                    .padding(.vertical, 40)
+                    errorView(error: error)
+                } else if manager.prayers.isEmpty {
+                    emptyView
                 } else {
-                    nextPrayerCard
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 24)
-                    
-                    ScrollView {
-                        VStack(spacing: 10) {
-                            ForEach($manager.prayers) { $prayer in
-                                PrayerRow(
-                                    prayer: prayer,
-                                    isCurrent: manager.prayers.firstIndex(where: { $0.id == prayer.id }) == manager.currentPrayerIndex
-                                )
-                                .onTapGesture {
-                                    prayer.isEnabled.toggle()
-                                    manager.save()
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                    }
+                    nextPrayerCard.padding(.horizontal, 24).padding(.bottom, 24)
+                    prayerListView
                 }
             }
         }
         .frame(minWidth: 400, minHeight: 500)
-        .sheet(isPresented: $showingSettings) {
-            SettingsView(manager: manager)
+        .sheet(isPresented: $showingSettings) { SettingsView(manager: manager) }
+    }
+    
+    private var headerView: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Salaati").font(.system(size: 28, weight: .bold, design: .rounded)).foregroundColor(.white)
+                Text(manager.locationName).font(.subheadline).foregroundColor(.white.opacity(0.7))
+            }
+            Spacer()
+            Button(action: { showingSettings = true }) {
+                Image(systemName: "gearshape.fill").font(.title2).foregroundColor(.white.opacity(0.8))
+            }.buttonStyle(.plain)
         }
+        .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)
+    }
+    
+    private var loadingView: some View {
+        ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)).scaleEffect(1.5).padding(.vertical, 40)
+    }
+    
+    private func errorView(error: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundColor(.orange)
+            Text(error).foregroundColor(.white.opacity(0.7))
+            Button("Retry") { Task { await manager.fetchPrayerTimes() } }
+                .buttonStyle(.borderedProminent).tint(Color(hex: "E94560"))
+        }.padding(.vertical, 40)
+    }
+    
+    private var emptyView: some View {
+        Text("Loading prayer times...").foregroundColor(.white.opacity(0.7)).padding(.vertical, 40)
     }
     
     private var nextPrayerCard: some View {
-        VStack(spacing: 8) {
-            Text("Next Prayer")
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
-            
-            let prayerIndex = min(manager.currentPrayerIndex, manager.prayers.count - 1)
-            Text(manager.prayers[prayerIndex].name)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .foregroundColor(Color(hex: "E94560"))
-            
-            Text(manager.timeRemaining())
-                .font(.system(size: 20, weight: .medium, design: .monospaced))
-                .foregroundColor(.white)
-            
-            Text("at \(timeFormatter.string(from: manager.prayers[prayerIndex].time))")
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.6))
+        let prayerIndex = min(manager.currentPrayerIndex, max(0, manager.prayers.count - 1))
+        
+        return VStack(spacing: 8) {
+            Text("Next Prayer").font(.subheadline).foregroundColor(.white.opacity(0.7))
+            Text(manager.prayers[prayerIndex].name).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundColor(Color(hex: "E94560"))
+            Text(manager.timeRemaining()).font(.system(size: 20, weight: .medium, design: .monospaced)).foregroundColor(.white)
+            Text("at \(timeFormatter.string(from: manager.prayers[prayerIndex].time))").font(.subheadline).foregroundColor(.white.opacity(0.6))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color.white.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                )
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.2), lineWidth: 1))
         )
+    }
+    
+    private var prayerListView: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                ForEach($manager.prayers) { $prayer in
+                    PrayerRow(prayer: prayer, isCurrent: manager.prayers.firstIndex(where: { $0.id == prayer.id }) == manager.currentPrayerIndex)
+                        .onTapGesture { prayer.isEnabled.toggle(); manager.save() }
+                }
+            }.padding(.horizontal, 24)
+        }
     }
     
     private func formattedDate() -> String {
@@ -351,55 +293,31 @@ struct PrayerRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(prayer.name)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    
-                    Text(prayer.arabicName)
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.7))
+                    Text(prayer.name).font(.headline).foregroundColor(.white)
+                    Text(prayer.arabicName).font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
                 }
-                
-                Text(timeFormatter.string(from: prayer.time))
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.6))
+                Text(timeFormatter.string(from: prayer.time)).font(.subheadline).foregroundColor(.white.opacity(0.6))
             }
-            
             Spacer()
-            
             if isCurrent {
-                Text("NOW")
-                    .font(.caption.bold())
-                    .foregroundColor(Color(hex: "E94560"))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(hex: "E94560").opacity(0.2))
-                    .cornerRadius(6)
+                Text("NOW").font(.caption.bold()).foregroundColor(Color(hex: "E94560"))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color(hex: "E94560").opacity(0.2)).cornerRadius(6)
             }
-            
-            Toggle("", isOn: Binding(
-                get: { prayer.isEnabled },
-                set: { _ in }
-            ))
-            .labelsHidden()
-            .tint(Color(hex: "E94560"))
+            Toggle("", isOn: Binding(get: { prayer.isEnabled }, set: { _ in })).labelsHidden().tint(Color(hex: "E94560"))
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(isCurrent ? Color.white.opacity(0.15) : Color.white.opacity(0.05))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isCurrent ? Color(hex: "E94560").opacity(0.5) : Color.clear, lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isCurrent ? Color(hex: "E94560").opacity(0.5) : Color.clear, lineWidth: 1))
     }
 }
 
 struct SettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
     @Environment(\.dismiss) private var dismiss
-    
     @State private var locationName: String = ""
     @State private var latitude: String = ""
     @State private var longitude: String = ""
@@ -421,104 +339,58 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Settings")
-                    .font(.title2.bold())
-                    .foregroundColor(.primary)
-                
+                Text("Settings").font(.title2.bold()).foregroundColor(.primary)
                 Spacer()
-                
-                Button("Done") {
-                    saveAndClose()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(hex: "E94560"))
-            }
-            .padding()
-            
+                Button("Done") { saveAndClose() }.buttonStyle(.borderedProminent).tint(Color(hex: "E94560"))
+            }.padding()
             Divider()
-            
             Form {
                 Section("Location") {
-                    TextField("Location Name", text: $locationName)
-                        .textFieldStyle(.roundedBorder)
-                    
+                    TextField("Location Name", text: $locationName).textFieldStyle(.roundedBorder)
                     HStack {
-                        TextField("Latitude", text: $latitude)
-                            .textFieldStyle(.roundedBorder)
-                        
-                        TextField("Longitude", text: $longitude)
-                            .textFieldStyle(.roundedBorder)
+                        TextField("Latitude", text: $latitude).textFieldStyle(.roundedBorder)
+                        TextField("Longitude", text: $longitude).textFieldStyle(.roundedBorder)
                     }
-                    
                     Button(action: fetchCurrentLocation) {
                         HStack {
-                            if isFetchingLocation {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "location.fill")
-                            }
+                            if isFetchingLocation { ProgressView().scaleEffect(0.8) }
+                            else { Image(systemName: "location.fill") }
                             Text("Use Current Location")
                         }
-                    }
-                    .disabled(isFetchingLocation)
+                    }.disabled(isFetchingLocation)
                 }
-                
                 Section("Popular Locations") {
                     ForEach(popularLocations, id: \.0) { name, lat, lon in
-                        Button(action: {
-                            locationName = name
-                            latitude = String(lat)
-                            longitude = String(lon)
-                        }) {
+                        Button(action: { locationName = name; latitude = String(lat); longitude = String(lon) }) {
                             HStack {
-                                Text(name)
-                                    .foregroundColor(.primary)
+                                Text(name).foregroundColor(.primary)
                                 Spacer()
-                                if locationName == name {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(Color(hex: "E94560"))
-                                }
+                                if locationName == name { Image(systemName: "checkmark").foregroundColor(Color(hex: "E94560")) }
                             }
-                        }
-                        .buttonStyle(.plain)
+                        }.buttonStyle(.plain)
                     }
                 }
-                
                 Section("Prayer Times (Manual Override)") {
                     ForEach($manager.prayers) { $prayer in
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(prayer.name)
-                                    .font(.headline)
-                                Text(prayer.arabicName)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                Text(prayer.name).font(.headline)
+                                Text(prayer.arabicName).font(.subheadline).foregroundColor(.secondary)
                             }
-                            
                             Spacer()
-                            
-                            DatePicker("", selection: $prayer.time, displayedComponents: .hourAndMinute)
-                                .labelsHidden()
+                            DatePicker("", selection: $prayer.time, displayedComponents: .hourAndMinute).labelsHidden()
                         }
                     }
                 }
-                
                 Section {
                     Button("Reset to Default Location") {
                         locationName = "Casablanca, Morocco"
                         latitude = "33.5731"
                         longitude = "-7.5898"
-                    }
-                    .foregroundColor(.red)
+                    }.foregroundColor(.red)
                 }
-            }
-            .formStyle(.grouped)
-        }
-        .frame(width: 450, height: 600)
-        .onAppear {
-            loadSettings()
-        }
+            }.formStyle(.grouped)
+        }.frame(width: 450, height: 600).onAppear { loadSettings() }
     }
     
     private func loadSettings() {
@@ -529,29 +401,23 @@ struct SettingsView: View {
     
     private func fetchCurrentLocation() {
         isFetchingLocation = true
-        
         Task {
             if let url = URL(string: "http://ipapi.co/json/"),
-               let (data, _) = try? await URLSession.shared.data(from: url) {
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let city = json["city"] as? String,
-                   let country = json["country_name"] as? String,
-                   let lat = json["latitude"] as? Double,
-                   let lon = json["longitude"] as? Double {
-                    
-                    await MainActor.run {
-                        locationName = "\(city), \(country)"
-                        latitude = String(lat)
-                        longitude = String(lon)
-                        isFetchingLocation = false
-                    }
-                    return
+               let (data, _) = try? await URLSession.shared.data(from: url),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let city = json["city"] as? String,
+               let country = json["country_name"] as? String,
+               let lat = json["latitude"] as? Double,
+               let lon = json["longitude"] as? Double {
+                await MainActor.run {
+                    locationName = "\(city), \(country)"
+                    latitude = String(lat)
+                    longitude = String(lon)
+                    isFetchingLocation = false
                 }
+                return
             }
-            
-            await MainActor.run {
-                isFetchingLocation = false
-            }
+            await MainActor.run { isFetchingLocation = false }
         }
     }
     
@@ -570,26 +436,13 @@ extension Color {
         Scanner(string: hex).scanHexInt64(&int)
         let a, r, g, b: UInt64
         switch hex.count {
-        case 3:
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6:
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            (a, r, g, b) = (1, 1, 1, 0)
+        case 3: (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default: (a, r, g, b) = (1, 1, 1, 0)
         }
-        
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue: Double(b) / 255,
-            opacity: Double(a) / 255
-        )
+        self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: Double(a) / 255)
     }
 }
 
-#Preview {
-    ContentView()
-}
+#Preview { ContentView() }
