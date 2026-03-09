@@ -4,9 +4,9 @@ import SwiftUI
 struct SalaatiSwiftUiApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            SalaatiApp()
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 450, height: 600)
+        .defaultSize(width: 400, height: 700)
     }
 }
