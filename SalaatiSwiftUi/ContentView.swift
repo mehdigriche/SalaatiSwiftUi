@@ -19,18 +19,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover!
     var timer: Timer?
     var prayerManager = PrayerTimesManager()
-    
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
         startTimer()
         NotificationManager.shared.requestPermission()
     }
-    
+
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
     }
-    
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -39,7 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refreshMenuBar()
     }
-    
+
     private func setupPopover() {
         popover = NSPopover()
         popover.contentSize = NSSize(width: 380, height: 550)
@@ -47,7 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.animates = true
         popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager, appDelegate: self))
     }
-    
+
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -56,21 +56,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    
+
     func refreshMenuBar() {
         guard let button = statusItem.button else { return }
         let settings = SettingsManager.shared
-        
+
         // Always show icon
         if settings.showIcon {
             button.image = NSImage(systemSymbolName: "moon.stars.fill", accessibilityDescription: "Salaati")
         } else {
             button.image = nil
         }
-        
+
         // Build text
         var text = ""
-        
+
         if settings.showNextPrayer {
             if let nextPrayer = prayerManager.getNextPrayer() {
                 // Name
@@ -79,7 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if settings.prayerNameDisplay == .abbreviation {
                     text += String((settings.arabicMode ? nextPrayer.arabicName : nextPrayer.name).prefix(3))
                 }
-                
+
                 // Time
                 if settings.prayerTimeDisplay == .countdown {
                     if !text.isEmpty { text += " " }
@@ -90,9 +90,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        
+
         button.title = text
-        
+
         // Icon position
         if settings.showIcon && !text.isEmpty {
             button.imagePosition = .imageLeading
@@ -100,13 +100,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageOnly
         }
     }
-    
+
     private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
     }
-    
+
     @objc func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
@@ -121,54 +121,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - Settings Manager
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
-    
+
     @Published var showNextPrayer: Bool {
-        didSet { 
+        didSet {
             UserDefaults.standard.set(showNextPrayer, forKey: "showNextPrayer")
             NotificationCenter.default.post(name: .refreshMenuBar, object: nil)
         }
     }
-    
+
     @Published var prayerNameDisplay: PrayerNameDisplay {
-        didSet { 
+        didSet {
             UserDefaults.standard.set(prayerNameDisplay.rawValue, forKey: "prayerNameDisplay")
             NotificationCenter.default.post(name: .refreshMenuBar, object: nil)
         }
     }
-    
+
     @Published var prayerTimeDisplay: PrayerTimeDisplay {
-        didSet { 
+        didSet {
             UserDefaults.standard.set(prayerTimeDisplay.rawValue, forKey: "prayerTimeDisplay")
             NotificationCenter.default.post(name: .refreshMenuBar, object: nil)
         }
     }
-    
+
     @Published var showIcon: Bool {
-        didSet { 
+        didSet {
             UserDefaults.standard.set(showIcon, forKey: "showIcon")
             NotificationCenter.default.post(name: .refreshMenuBar, object: nil)
         }
     }
-    
+
     @Published var arabicMode: Bool {
         didSet { UserDefaults.standard.set(arabicMode, forKey: "arabicMode") }
     }
-    
+
     @Published var startAtLogin: Bool {
         didSet {
             UserDefaults.standard.set(startAtLogin, forKey: "startAtLogin")
             updateLoginItem()
         }
     }
-    
+
     @Published var asrMethod: AsrMethod {
         didSet { UserDefaults.standard.set(asrMethod.rawValue, forKey: "asrMethod") }
     }
-    
+
     @Published var fajrIshaMethod: Int {
         didSet { UserDefaults.standard.set(fajrIshaMethod, forKey: "fajrIshaMethod") }
     }
-    
+
     private init() {
         showNextPrayer = UserDefaults.standard.object(forKey: "showNextPrayer") as? Bool ?? true
         prayerNameDisplay = PrayerNameDisplay(rawValue: UserDefaults.standard.integer(forKey: "prayerNameDisplay")) ?? .full
@@ -179,7 +179,7 @@ class SettingsManager: ObservableObject {
         asrMethod = AsrMethod(rawValue: UserDefaults.standard.integer(forKey: "asrMethod")) ?? .standard
         fajrIshaMethod = UserDefaults.standard.object(forKey: "fajrIshaMethod") as? Int ?? 3
     }
-    
+
     private func updateLoginItem() {
         if #available(macOS 13.0, *) {
             do {
@@ -211,7 +211,7 @@ struct Prayer: Identifiable, Codable, Equatable {
     let arabicName: String
     var time: Date
     var isEnabled: Bool
-    
+
     init(id: UUID = UUID(), name: String, arabicName: String, time: Date, isEnabled: Bool) {
         self.id = id
         self.name = name
@@ -219,7 +219,7 @@ struct Prayer: Identifiable, Codable, Equatable {
         self.time = time
         self.isEnabled = isEnabled
     }
-    
+
     static func == (lhs: Prayer, rhs: Prayer) -> Bool { lhs.id == rhs.id }
 }
 
@@ -233,17 +233,17 @@ class PrayerTimesManager: ObservableObject {
     @Published var currentPrayerIndex: Int = 0
     @Published var hijriDate: String = ""
     @Published var timezone: TimeZone = TimeZone(identifier: "Africa/Casablanca")!
-    
+
     init() {
         loadSavedLocation()
         Task { await fetchPrayerTimes() }
-        
+
         // Listen for refresh requests
         NotificationCenter.default.addObserver(forName: .refreshPrayerTimes, object: nil, queue: .main) { [weak self] _ in
             Task { await self?.fetchPrayerTimes() }
         }
     }
-    
+
     func loadSavedLocation() {
         if let name = UserDefaults.standard.string(forKey: "locationName") {
             locationName = name
@@ -257,36 +257,36 @@ class PrayerTimesManager: ObservableObject {
             self.timezone = timezone
         }
     }
-    
+
     func fetchPrayerTimes() async {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM-yyyy"
         let dateString = dateFormatter.string(from: Date())
-        
+
         let method = SettingsManager.shared.fajrIshaMethod
-        
+
         // Use coordinates API
         let urlString = "https://api.aladhan.com/v1/timings/\(dateString)?latitude=\(latitude)&longitude=\(longitude)&method=\(method)"
-        
+
         guard let url = URL(string: urlString) else {
             prayers = getDefaultPrayers()
             return
         }
-        
+
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(AlAdhanResponse.self, from: data)
-            
+
             guard let timings = response.data.timings else {
                 prayers = getDefaultPrayers()
                 return
             }
-            
+
             let calendar = Calendar.current
             let today = Date()
-            
+
             hijriDate = "\(response.data.date.hijri.day) \(response.data.date.hijri.month.ar) \(response.data.date.hijri.year)"
-            
+
             prayers = [
                 Prayer(name: "Fajr", arabicName: "فجر", time: parseTime(timings.fajr, calendar: calendar, today: today), isEnabled: true),
                 Prayer(name: "Sunrise", arabicName: "شروق", time: parseTime(timings.sunrise, calendar: calendar, today: today), isEnabled: false),
@@ -295,7 +295,7 @@ class PrayerTimesManager: ObservableObject {
                 Prayer(name: "Maghrib", arabicName: "مغرب", time: parseTime(timings.maghrib, calendar: calendar, today: today), isEnabled: true),
                 Prayer(name: "Isha", arabicName: "عشاء", time: parseTime(timings.isha, calendar: calendar, today: today), isEnabled: true)
             ]
-            
+
             updateCurrentPrayer()
             save()
             NotificationManager.shared.schedulePrayerNotifications(prayers: prayers, locationName: locationName)
@@ -305,7 +305,7 @@ class PrayerTimesManager: ObservableObject {
             prayers = getDefaultPrayers()
         }
     }
-    
+
     private func parseTime(_ timeString: String, calendar: Calendar, today: Date) -> Date {
         let components = timeString.split(separator: ":")
         guard components.count >= 2,
@@ -313,7 +313,7 @@ class PrayerTimesManager: ObservableObject {
               let minute = Int(components[1]) else { return today }
         return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: today) ?? today
     }
-    
+
     private func getDefaultPrayers() -> [Prayer] {
         let calendar = Calendar.current
         let today = Date()
@@ -325,7 +325,7 @@ Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHou
             Prayer(name: "Isha", arabicName: "عشاء", time: calendar.date(bySettingHour: 19, minute: 51, second: 0, of: today)!, isEnabled: true)
         ]
     }
-    
+
     func updateCurrentPrayer() {
         let now = Date()
         for (index, prayer) in prayers.enumerated() {
@@ -336,12 +336,12 @@ Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHou
         }
         currentPrayerIndex = max(0, prayers.count - 1)
     }
-    
+
     func getNextPrayer() -> Prayer? {
         let now = Date()
         return prayers.first(where: { $0.time > now && $0.isEnabled })
     }
-    
+
     func timeRemaining() -> String {
         let now = Date()
         if let nextPrayer = prayers.first(where: { $0.time > now && $0.isEnabled }) {
@@ -352,14 +352,14 @@ Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHou
         }
         return "00:00:00"
     }
-    
+
     func save() {
         UserDefaults.standard.set(locationName, forKey: "locationName")
         UserDefaults.standard.set(latitude, forKey: "latitude")
         UserDefaults.standard.set(longitude, forKey: "longitude")
         UserDefaults.standard.set(timezone.identifier, forKey: "timezone")
     }
-    
+
     func updateLocation(name: String, lat: Double, lon: Double, tz: TimeZone? = nil) {
         locationName = name
         latitude = lat
@@ -385,11 +385,11 @@ struct MenuBarPopoverView: View {
     @ObservedObject var manager: PrayerTimesManager
     weak var appDelegate: AppDelegate?
     @State private var showingSettings = false
-    
+
     var body: some View {
         ZStack {
             LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            
+
             VStack(spacing: 0) {
                 headerView
                 if !manager.prayers.isEmpty { nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12) }
@@ -401,7 +401,7 @@ struct MenuBarPopoverView: View {
             appDelegate?.refreshMenuBar()
         }
     }
-    
+
     private var headerView: some View {
         VStack(spacing: 4) {
             HStack { Image(systemName: "location.fill").font(.caption); Text(manager.locationName).font(.system(size: 13, weight: .medium)) }.foregroundColor(.white.opacity(0.7))
@@ -409,15 +409,15 @@ struct MenuBarPopoverView: View {
             Text(formattedDate()).font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
         }.padding(.top, 16).padding(.bottom, 8)
     }
-    
+
     private var nextPrayerCard: some View {
         let nextPrayer = manager.getNextPrayer()
         guard let prayer = nextPrayer else {
             return AnyView(VStack { Text("All prayers completed").foregroundColor(.white.opacity(0.7)) }.frame(maxWidth: .infinity).padding(.vertical, 16).background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1))))
         }
-        
+
         let displayName = SettingsManager.shared.arabicMode ? prayer.arabicName : prayer.name
-        
+
         return AnyView(VStack(spacing: 4) {
             Text("Next Prayer").font(.system(size: 11)).foregroundColor(.white.opacity(0.6))
             Text(displayName).font(.system(size: 24, weight: .bold)).foregroundColor(Color(hex: "E94560"))
@@ -425,7 +425,7 @@ struct MenuBarPopoverView: View {
             Text(timeFormatter.string(from: prayer.time)).font(.system(size: 12)).foregroundColor(.white.opacity(0.5))
         }.frame(maxWidth: .infinity).padding(.vertical, 16).background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "E94560").opacity(0.3), lineWidth: 1))))
     }
-    
+
     private var prayerTimesList: some View {
         ScrollView {
             VStack(spacing: 6) {
@@ -440,7 +440,7 @@ struct MenuBarPopoverView: View {
             }.padding(.horizontal, 12)
         }
     }
-    
+
     private var footerView: some View {
         HStack(spacing: 20) {
             Button(action: { showingSettings = true }) { HStack(spacing: 4) { Image(systemName: "gearshape"); Text("Settings") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
@@ -449,18 +449,18 @@ struct MenuBarPopoverView: View {
         }.padding(.vertical, 12).padding(.horizontal, 16).background(Color.black.opacity(0.2))
         .sheet(isPresented: $showingSettings) { SettingsView(manager: manager, appDelegate: appDelegate) }
     }
-    
+
     private func isCurrentPrayer(_ prayer: Prayer) -> Bool {
         guard let index = manager.prayers.firstIndex(where: { $0.id == prayer.id }) else { return false }
         return index == manager.currentPrayerIndex
     }
-    
+
     private func formattedDate() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMMM d, yyyy"
         return formatter.string(from: Date())
     }
-    
+
     private var timeFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "hh:mm a"
@@ -474,7 +474,7 @@ struct SettingsView: View {
     weak var appDelegate: AppDelegate?
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
-    
+
     var body: some View {
         ZStack {
             Color(hex: "1A1A2E").ignoresSafeArea()
@@ -484,13 +484,13 @@ struct SettingsView: View {
                     Text("Location").tag(1)
                     Text("Prayer Times").tag(2)
                 }.pickerStyle(.segmented).padding()
-                
+
                 TabView(selection: $selectedTab) {
                     GeneralSettingsView(appDelegate: appDelegate).tag(0)
                     LocationSettingsView(manager: manager, appDelegate: appDelegate).tag(1)
                     PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate).tag(2)
                 }.tabViewStyle(.automatic)
-                
+
                 HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
             }
         }.frame(width: 380, height: 500)
@@ -501,7 +501,7 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     weak var appDelegate: AppDelegate?
     @ObservedObject var settingsManager = SettingsManager.shared
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -509,7 +509,7 @@ struct GeneralSettingsView: View {
                     Toggle("Show Next Prayer", isOn: $settingsManager.showNextPrayer).tint(Color(hex: "E94560"))
                     Toggle("Show Icon", isOn: $settingsManager.showIcon).tint(Color(hex: "E94560"))
                 }
-                
+
                 SettingsSection(title: "Prayer Name") {
                     Picker("Display", selection: $settingsManager.prayerNameDisplay) {
                         Text("Full").tag(PrayerNameDisplay.full)
@@ -517,7 +517,7 @@ struct GeneralSettingsView: View {
                         Text("None").tag(PrayerNameDisplay.none)
                     }.pickerStyle(.segmented)
                 }
-                
+
                 SettingsSection(title: "Prayer Time") {
                     Picker("Display", selection: $settingsManager.prayerTimeDisplay) {
                         Text("Countdown").tag(PrayerTimeDisplay.countdown)
@@ -525,11 +525,11 @@ struct GeneralSettingsView: View {
                         Text("None").tag(PrayerTimeDisplay.none)
                     }.pickerStyle(.segmented)
                 }
-                
+
                 SettingsSection(title: "Language") {
                     Toggle("Arabic Mode", isOn: $settingsManager.arabicMode).tint(Color(hex: "E94560"))
                 }
-                
+
                 SettingsSection(title: "Startup") {
                     Toggle("Start at Login", isOn: $settingsManager.startAtLogin).tint(Color(hex: "E94560"))
                 }
@@ -542,16 +542,27 @@ struct GeneralSettingsView: View {
 struct LocationSettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
     weak var appDelegate: AppDelegate?
-    
+
     @State private var cityInput: String = ""
     @State private var latitude: String = ""
     @State private var longitude: String = ""
     @State private var selectedTimezone: String = "Africa/Casablanca"
     @State private var isSearching: Bool = false
     @State private var searchError: String?
-    
+    @State private var searchResults: [SearchResult] = []
+    @State private var showResults: Bool = false
+
+    struct SearchResult: Identifiable {
+        let id = UUID()
+        let name: String
+        let country: String
+        let lat: Double
+        let lon: Double
+        let admin: String
+    }
+
     private let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
-    
+
     private let popularCities = [
         ("Casablanca", 33.5731, -7.5898, "Africa/Casablanca"),
         ("Rabat", 34.0209, -6.8416, "Africa/Casablanca"),
@@ -562,21 +573,58 @@ struct LocationSettingsView: View {
         ("Istanbul", 41.0082, 28.9784, "Europe/Istanbul"),
         ("New York", 40.7128, -74.0060, "America/New_York")
     ]
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 SettingsSection(title: "Current Location (IP)") {
                     Button(action: useCurrentLocation) {
-                        HStack { Image(systemName: "location.fill"); Text("Use My Location") }
+                        HStack {
+                            if isSearching {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "location.fill")
+                            }
+                            Text("Use My Location")
+                        }
                     }.disabled(isSearching)
                 }
-                
+
                 SettingsSection(title: "Search City") {
-                    TextField("City name", text: $cityInput).textFieldStyle(.roundedBorder)
-                    Button("Search") { searchCity() }.disabled(isSearching || cityInput.isEmpty)
+                    HStack {
+                        TextField("City name", text: $cityInput).textFieldStyle(.roundedBorder)
+                            .onSubmit { searchCity() }
+                        Button(action: searchCity) {
+                            if isSearching {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "magnifyingglass")
+                            }
+                        }.disabled(isSearching || cityInput.isEmpty)
+                    }
                 }
-                
+
+                // Search Results
+                if showResults && !searchResults.isEmpty {
+                    SettingsSection(title: "Search Results") {
+                        ForEach(searchResults) { result in
+                            Button(action: {
+                                let fullName = result.admin.isEmpty ? "\(result.name), \(result.country)" : "\(result.name), \(result.admin), \(result.country)"
+                                setLocation(city: fullName, lat: result.lat, lon: result.lon, tz: TimeZone.current.identifier)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(result.name).font(.system(size: 14, weight: .medium)).foregroundColor(.white)
+                                        Text("\(result.admin), \(result.country)").font(.system(size: 11)).foregroundColor(.white.opacity(0.6))
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").foregroundColor(.white.opacity(0.4)).font(.caption)
+                                }.padding(.vertical, 4)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+
                 SettingsSection(title: "Popular Cities") {
                     ForEach(popularCities, id: \.0) { city, lat, lon, tz in
                         Button(action: {
@@ -592,71 +640,165 @@ struct LocationSettingsView: View {
                         }.buttonStyle(.plain)
                     }
                 }
-                
+
                 if let error = searchError {
                     Text(error).font(.caption).foregroundColor(.red)
+                }
+
+                // Current location display
+                if !manager.locationName.isEmpty {
+                    HStack {
+                        Image(systemName: "mappin.circle.fill").foregroundColor(Color(hex: "E94560"))
+                        Text("Current: \(manager.locationName)").font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                    }.padding(.top, 8)
                 }
             }.padding()
         }.onAppear { loadCurrentSettings() }
     }
-    
+
     private func loadCurrentSettings() {
         cityInput = manager.locationName
         latitude = String(manager.latitude)
         longitude = String(manager.longitude)
         selectedTimezone = manager.timezone.identifier
     }
-    
+
     private func setLocation(city: String, lat: Double, lon: Double, tz: String) {
+        // Clear search results
+        searchResults = []
+        showResults = false
+        cityInput = ""
+
+        // Update location and fetch new prayer times
         manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
-        appDelegate?.refreshMenuBar()
+
+        // Force UI refresh
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            appDelegate?.refreshMenuBar()
+            // Post notification to refresh the main popover
+            NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil)
+        }
     }
-    
+
     private func useCurrentLocation() {
         isSearching = true
         searchError = nil
         
         Task {
-            if let url = URL(string: "http://ipapi.co/json/"),
-               let (data, _) = try? await URLSession.shared.data(from: url),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let city = json["city"] as? String,
-               let country = json["country_name"] as? String,
-               let lat = json["latitude"] as? Double,
-               let lon = json["longitude"] as? Double,
-               let tzString = json["timezone"] as? String {
+            guard let url = URL(string: "https://ipapi.co/json/") else {
+                await MainActor.run { 
+                    searchError = "Invalid URL"
+                    isSearching = false 
+                }
+                return
+            }
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    await MainActor.run { 
+                        searchError = "Could not get location"
+                        isSearching = false 
+                    }
+                    return
+                }
+                
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let city = json["city"] as? String,
+                      let country = json["country_name"] as? String,
+                      let lat = json["latitude"] as? Double,
+                      let lon = json["longitude"] as? Double,
+                      let tzString = json["timezone"] as? String else {
+                    await MainActor.run { 
+                        searchError = "Could not parse location data"
+                        isSearching = false 
+                    }
+                    return
+                }
+                
                 await MainActor.run {
                     manager.updateLocation(name: "\(city), \(country)", lat: lat, lon: lon, tz: TimeZone(identifier: tzString))
                     isSearching = false
-                    appDelegate?.refreshMenuBar()
+                    
+                    // Force UI refresh
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        appDelegate?.refreshMenuBar()
+                        NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil)
+                    }
                 }
-            } else {
-                await MainActor.run { searchError = "Could not get location"; isSearching = false }
+            } catch {
+                await MainActor.run { 
+                    searchError = "Error: \(error.localizedDescription)"
+                    isSearching = false 
+                }
             }
         }
     }
-    
+
     private func searchCity() {
+        guard !cityInput.isEmpty else { return }
         isSearching = true
         searchError = nil
-        
+        searchResults = []
+        showResults = false
+
         Task {
             let query = cityInput.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cityInput
-            if let url = URL(string: "https://geocoding-api.open-meteo.com/v1/search?name=\(query)&count=1&language=en&format=json"),
-               let (data, _) = try? await URLSession.shared.data(from: url),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let results = json["results"] as? [[String: Any]],
-               let first = results.first,
-               let lat = first["latitude"] as? Double,
-               let lon = first["longitude"] as? Double,
-               let name = first["name"] as? String {
+            let urlString = "https://geocoding-api.open-meteo.com/v1/search?name=\(query)&count=5&language=en&format=json"
+
+            guard let url = URL(string: urlString) else {
                 await MainActor.run {
-                    manager.updateLocation(name: name, lat: lat, lon: lon)
+                    searchError = "Invalid URL"
                     isSearching = false
-                    appDelegate?.refreshMenuBar()
                 }
-            } else {
-                await MainActor.run { searchError = "City not found"; isSearching = false }
+                return
+            }
+
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    await MainActor.run {
+                        searchError = "Server error"
+                        isSearching = false
+                    }
+                    return
+                }
+
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let results = json["results"] as? [[String: Any]] else {
+                    await MainActor.run {
+                        searchError = "City not found"
+                        isSearching = false
+                    }
+                    return
+                }
+
+                let parsedResults = results.compactMap { result -> SearchResult? in
+                    guard let name = result["name"] as? String,
+                          let lat = result["latitude"] as? Double,
+                          let lon = result["longitude"] as? Double else { return nil }
+
+                    let country = result["country"] as? String ?? ""
+                    let admin = result["admin1"] as? String ?? ""
+                    return SearchResult(name: name, country: country, lat: lat, lon: lon, admin: admin)
+                }
+
+                await MainActor.run {
+                    if parsedResults.isEmpty {
+                        searchError = "No results found"
+                    } else {
+                        searchResults = parsedResults
+                        showResults = true
+                    }
+                    isSearching = false
+                }
+            } catch {
+                await MainActor.run {
+                    searchError = "Error: \(error.localizedDescription)"
+                    isSearching = false
+                }
             }
         }
     }
@@ -667,7 +809,7 @@ struct PrayerTimesSettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
     weak var appDelegate: AppDelegate?
     @ObservedObject var settingsManager = SettingsManager.shared
-    
+
     private let calculationMethods = [
         (0, "Muslim World League"),
         (1, "ISNA"),
@@ -677,7 +819,7 @@ struct PrayerTimesSettingsView: View {
         (5, "Geophysics"),
         (6, "Habib Al Syed")
     ]
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -690,7 +832,7 @@ struct PrayerTimesSettingsView: View {
                         appDelegate?.refreshMenuBar()
                     }
                 }
-                
+
                 SettingsSection(title: "Asr Method") {
                     Picker("Method", selection: $settingsManager.asrMethod) {
                         Text("Standard").tag(AsrMethod.standard)
@@ -718,27 +860,27 @@ struct SettingsSection<Content: View>: View {
 class NotificationManager {
     static let shared = NotificationManager()
     private init() {}
-    
+
     func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
-    
+
     func schedulePrayerNotifications(prayers: [Prayer], locationName: String) {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
-        
+
         for prayer in prayers where prayer.isEnabled {
             let content = UNMutableNotificationContent()
             content.title = "Time for \(prayer.name)"
             content.body = "\(prayer.name) - \(prayer.arabicName)"
             content.sound = .default
-            
+
             let calendar = Calendar.current
             let components = calendar.dateComponents([.hour, .minute], from: prayer.time)
             var dateComponents = DateComponents()
             dateComponents.hour = components.hour
             dateComponents.minute = components.minute
-            
+
             let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
             let request = UNNotificationRequest(identifier: prayer.id.uuidString, content: content, trigger: trigger)
             center.add(request, withCompletionHandler: nil)
