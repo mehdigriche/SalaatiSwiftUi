@@ -233,6 +233,7 @@ class PrayerTimesManager: ObservableObject {
     @Published var currentPrayerIndex: Int = 0
     @Published var hijriDate: String = ""
     @Published var timezone: TimeZone = TimeZone(identifier: "Africa/Casablanca")!
+    @Published var isLoading: Bool = false
 
     init() {
         loadSavedLocation()
@@ -259,6 +260,8 @@ class PrayerTimesManager: ObservableObject {
     }
 
     func fetchPrayerTimes() async {
+        isLoading = true
+        
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM-yyyy"
         let dateString = dateFormatter.string(from: Date())
@@ -270,6 +273,7 @@ class PrayerTimesManager: ObservableObject {
 
         guard let url = URL(string: urlString) else {
             prayers = getDefaultPrayers()
+            isLoading = false
             return
         }
 
@@ -279,6 +283,7 @@ class PrayerTimesManager: ObservableObject {
 
             guard let timings = response.data.timings else {
                 prayers = getDefaultPrayers()
+                isLoading = false
                 return
             }
 
@@ -304,6 +309,8 @@ class PrayerTimesManager: ObservableObject {
             print("Error: \(error)")
             prayers = getDefaultPrayers()
         }
+        
+        isLoading = false
     }
 
     private func parseTime(_ timeString: String, calendar: Calendar, today: Date) -> Date {
@@ -393,8 +400,22 @@ struct MenuBarPopoverView: View {
 
             VStack(spacing: 0) {
                 headerView
-                if !manager.prayers.isEmpty { nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12) }
-                if !manager.prayers.isEmpty { prayerTimesList }
+                
+                // Loading indicator
+                if manager.isLoading {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        Text("Loading...").font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                    }.padding(.vertical, 20)
+                } else if !manager.prayers.isEmpty {
+                    nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12)
+                    prayerTimesList
+                } else {
+                    Text("No prayer times available").foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
+                }
+                
                 footerView
             }
         }.frame(width: 380, height: 550)
@@ -680,9 +701,15 @@ struct LocationSettingsView: View {
         // Update location and fetch new prayer times
         manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
         
-        // Close the settings popover to show updated main popover
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        // Wait for API to respond, then close settings and refresh
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             appDelegate?.popover.performClose(nil)
+            // Reopen to show updated data
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if let button = appDelegate?.statusItem.button {
+                    appDelegate?.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                }
+            }
         }
     }
 
