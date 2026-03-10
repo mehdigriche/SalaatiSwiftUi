@@ -321,7 +321,8 @@ class PrayerTimesManager: ObservableObject {
             Prayer(name: "Fajr", arabicName: "فجر", time: calendar.date(bySettingHour: 5, minute: 26, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Sunrise", arabicName: "شروق", time: calendar.date(bySettingHour: 6, minute: 49, second: 0, of: today)!, isEnabled: false),
             Prayer(name: "Dhuhr", arabicName: "ظهر", time: calendar.date(bySettingHour: 12, minute: 41, second: 0, of: today)!, isEnabled: true),
-Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHour: 18, minute: 33, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Asr", arabicName: "عصر", time: calendar.date(bySettingHour: 15, minute: 30, second: 0, of: today)!, isEnabled: true),
+            Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHour: 18, minute: 33, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Isha", arabicName: "عشاء", time: calendar.date(bySettingHour: 19, minute: 51, second: 0, of: today)!, isEnabled: true)
         ]
     }
@@ -398,6 +399,10 @@ struct MenuBarPopoverView: View {
             }
         }.frame(width: 380, height: 550)
         .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
+            appDelegate?.refreshMenuBar()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
+            // Force view refresh when prayer times change
             appDelegate?.refreshMenuBar()
         }
     }
@@ -494,6 +499,9 @@ struct SettingsView: View {
                 HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
             }
         }.frame(width: 380, height: 500)
+        .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
+            // Force refresh when location/prayer times change
+        }
     }
 }
 
@@ -668,59 +676,57 @@ struct LocationSettingsView: View {
         searchResults = []
         showResults = false
         cityInput = ""
-
+        
         // Update location and fetch new prayer times
         manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
-
-        // Force UI refresh
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            appDelegate?.refreshMenuBar()
-            // Post notification to refresh the main popover
-            NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil)
+        
+        // Close the settings popover to show updated main popover
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            appDelegate?.popover.performClose(nil)
         }
     }
 
     private func useCurrentLocation() {
         isSearching = true
         searchError = nil
-        
+
         Task {
             guard let url = URL(string: "https://ipapi.co/json/") else {
-                await MainActor.run { 
+                await MainActor.run {
                     searchError = "Invalid URL"
-                    isSearching = false 
+                    isSearching = false
                 }
                 return
             }
-            
+
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)
-                
+
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                    await MainActor.run { 
+                    await MainActor.run {
                         searchError = "Could not get location"
-                        isSearching = false 
+                        isSearching = false
                     }
                     return
                 }
-                
+
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let city = json["city"] as? String,
                       let country = json["country_name"] as? String,
                       let lat = json["latitude"] as? Double,
                       let lon = json["longitude"] as? Double,
                       let tzString = json["timezone"] as? String else {
-                    await MainActor.run { 
+                    await MainActor.run {
                         searchError = "Could not parse location data"
-                        isSearching = false 
+                        isSearching = false
                     }
                     return
                 }
-                
+
                 await MainActor.run {
                     manager.updateLocation(name: "\(city), \(country)", lat: lat, lon: lon, tz: TimeZone(identifier: tzString))
                     isSearching = false
-                    
+
                     // Force UI refresh
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         appDelegate?.refreshMenuBar()
@@ -728,9 +734,9 @@ struct LocationSettingsView: View {
                     }
                 }
             } catch {
-                await MainActor.run { 
+                await MainActor.run {
                     searchError = "Error: \(error.localizedDescription)"
-                    isSearching = false 
+                    isSearching = false
                 }
             }
         }
