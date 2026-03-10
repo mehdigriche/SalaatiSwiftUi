@@ -164,41 +164,74 @@ class SettingsManager: ObservableObject {
     @Published var asrMethod: AsrMethod {
         didSet { UserDefaults.standard.set(asrMethod.rawValue, forKey: "asrMethod") }
     }
-    
+
     @Published var fajrIshaMethod: Int {
         didSet { UserDefaults.standard.set(fajrIshaMethod, forKey: "fajrIshaMethod") }
     }
-    
+
     // Prayer time adjustments (in minutes)
     @Published var fajrAdjustment: Int {
-        didSet { UserDefaults.standard.set(fajrAdjustment, forKey: "fajrAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(fajrAdjustment, forKey: "fajrAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     @Published var sunriseAdjustment: Int {
-        didSet { UserDefaults.standard.set(sunriseAdjustment, forKey: "sunriseAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(sunriseAdjustment, forKey: "sunriseAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     @Published var dhuhrAdjustment: Int {
-        didSet { UserDefaults.standard.set(dhuhrAdjustment, forKey: "dhuhrAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(dhuhrAdjustment, forKey: "dhuhrAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     @Published var asrAdjustment: Int {
-        didSet { UserDefaults.standard.set(asrAdjustment, forKey: "asrAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(asrAdjustment, forKey: "asrAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     @Published var maghribAdjustment: Int {
-        didSet { UserDefaults.standard.set(maghribAdjustment, forKey: "maghribAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(maghribAdjustment, forKey: "maghribAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     @Published var ishaAdjustment: Int {
-        didSet { UserDefaults.standard.set(ishaAdjustment, forKey: "ishaAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(ishaAdjustment, forKey: "ishaAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
     // Hijri date adjustment (in days)
     @Published var hijriAdjustment: Int {
-        didSet { UserDefaults.standard.set(hijriAdjustment, forKey: "hijriAdjustment"); NotificationCenter.default.post(name: .refreshPrayerTimes, object: nil) }
+        didSet {
+            UserDefaults.standard.set(hijriAdjustment, forKey: "hijriAdjustment")
+            refreshPrayerTimesIfNeeded()
+        }
     }
-    
+
+    // Helper to refresh prayer times
+    private func refreshPrayerTimesIfNeeded() {
+        if let manager = SettingsManager.prayerManager {
+            Task { @MainActor in
+                await manager.fetchPrayerTimes()
+            }
+        }
+    }
+
+    // Reference to prayer manager for direct refresh
+    static var prayerManager: PrayerTimesManager?
+
     private init() {
         showNextPrayer = UserDefaults.standard.object(forKey: "showNextPrayer") as? Bool ?? true
         prayerNameDisplay = PrayerNameDisplay(rawValue: UserDefaults.standard.integer(forKey: "prayerNameDisplay")) ?? .full
@@ -208,7 +241,7 @@ class SettingsManager: ObservableObject {
         startAtLogin = UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? false
         asrMethod = AsrMethod(rawValue: UserDefaults.standard.integer(forKey: "asrMethod")) ?? .standard
         fajrIshaMethod = UserDefaults.standard.object(forKey: "fajrIshaMethod") as? Int ?? 3
-        
+
         // Load adjustments
         fajrAdjustment = UserDefaults.standard.object(forKey: "fajrAdjustment") as? Int ?? 0
         sunriseAdjustment = UserDefaults.standard.object(forKey: "sunriseAdjustment") as? Int ?? 0
@@ -275,6 +308,9 @@ class PrayerTimesManager: ObservableObject {
     @Published var isLoading: Bool = false
 
     init() {
+        // Store reference for SettingsManager
+        SettingsManager.prayerManager = self
+
         loadSavedLocation()
         Task { await fetchPrayerTimes() }
 
@@ -328,7 +364,7 @@ class PrayerTimesManager: ObservableObject {
 
             let calendar = Calendar.current
             let today = Date()
-            
+
             let settings = SettingsManager.shared
 
             // Apply hijri adjustment
@@ -361,14 +397,14 @@ class PrayerTimesManager: ObservableObject {
         guard components.count >= 2,
               let hour = Int(components[0]),
               let minute = Int(components[1]) else { return today }
-        
+
         var date = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: today) ?? today
-        
+
         // Apply adjustment in minutes
         if adjustment != 0 {
             date = calendar.date(byAdding: .minute, value: adjustment, to: date) ?? date
         }
-        
+
         return date
     }
 
@@ -750,17 +786,22 @@ struct LocationSettingsView: View {
         searchResults = []
         showResults = false
         cityInput = ""
-
+        
         // Update location and fetch new prayer times
         manager.updateLocation(name: city, lat: lat, lon: lon, tz: TimeZone(identifier: tz))
-
-        // Wait for API to respond, then close settings and refresh
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            appDelegate?.popover.performClose(nil)
-            // Reopen to show updated data
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                if let button = appDelegate?.statusItem.button {
-                    appDelegate?.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        
+        // Force a refresh immediately
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            Task {
+                await self.manager.fetchPrayerTimes()
+                // Close settings and reopen main popover
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    appDelegate?.popover.performClose(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        if let button = appDelegate?.statusItem.button {
+                            appDelegate?.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                        }
+                    }
                 }
             }
         }
@@ -968,9 +1009,9 @@ struct PrayerTimesSettingsView: View {
 struct AdjustmentsSettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
     @ObservedObject var settingsManager = SettingsManager.shared
-    
+
     private let prayers = ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -985,7 +1026,7 @@ struct AdjustmentsSettingsView: View {
                         adjustmentRow(prayer: "Isha", adjustment: $settingsManager.ishaAdjustment)
                     }
                 }
-                
+
                 // Hijri date adjustment
                 SettingsSection(title: "Hijri Date Adjustment (days)") {
                     VStack(spacing: 8) {
@@ -1003,7 +1044,7 @@ struct AdjustmentsSettingsView: View {
                             .foregroundColor(.white.opacity(0.4))
                     }
                 }
-                
+
                 // Reset button
                 Button(action: resetAdjustments) {
                     HStack {
@@ -1014,7 +1055,7 @@ struct AdjustmentsSettingsView: View {
                     .foregroundColor(.white.opacity(0.7))
                 }
                 .padding(.top, 8)
-                
+
                 // Info
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Use these adjustments if prayer times seem inaccurate for your location.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
@@ -1023,7 +1064,7 @@ struct AdjustmentsSettingsView: View {
             }.padding()
         }
     }
-    
+
     private func adjustmentRow(prayer: String, adjustment: Binding<Int>) -> some View {
         HStack {
             Text(prayer).font(.system(size: 13)).foregroundColor(.white)
@@ -1036,7 +1077,7 @@ struct AdjustmentsSettingsView: View {
             }
         }
     }
-    
+
     private func resetAdjustments() {
         settingsManager.fajrAdjustment = 0
         settingsManager.sunriseAdjustment = 0
