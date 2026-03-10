@@ -843,23 +843,50 @@ struct PrayerTimesSettingsView: View {
     weak var appDelegate: AppDelegate?
     @ObservedObject var settingsManager = SettingsManager.shared
 
-    private let calculationMethods = [
-        (0, "Muslim World League"),
-        (1, "ISNA"),
-        (2, "Egyptian"),
-        (3, "Umm al-Qura"),
-        (4, "Ministry"),
-        (5, "Geophysics"),
-        (6, "Habib Al Syed")
+    private let calculationMethods: [(id: Int, name: String, fajr: String, isha: String, usedIn: String)] = [
+        (0, "Muslim World League", "18°", "17°", "Europe, Africa, Middle East"),
+        (1, "ISNA", "15°", "15°", "North America"),
+        (2, "Egyptian", "19.5°", "17.5°", "Egypt, Sudan"),
+        (3, "Umm al-Qura", "18.5°", "90 min", "Saudi Arabia"),
+        (4, "Ministry of Awqaf", "19.5°", "17.5°", "Kuwait, Qatar"),
+        (5, "Geophysics", "17.5°", "19°", "Arabian Gulf"),
+        (6, "Habib Al Syed", "18°", "18°", "India, Pakistan")
     ]
+
+    private var currentMethod: (id: Int, name: String, fajr: String, isha: String, usedIn: String)? {
+        calculationMethods.first { $0.id == settingsManager.fajrIshaMethod }
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                // Current method info
+                if let method = currentMethod {
+                    SettingsSection(title: "Current Method") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(method.name).font(.system(size: 14, weight: .bold)).foregroundColor(.white)
+                            HStack(spacing: 16) {
+                                VStack(alignment: .leading) {
+                                    Text("Fajr angle").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                                    Text(method.fajr).font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560"))
+                                }
+                                VStack(alignment: .leading) {
+                                    Text("Isha angle").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                                    Text(method.isha).font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560"))
+                                }
+                            }
+                            Text("Used in: \(method.usedIn)").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                        }
+                    }
+                }
+
                 SettingsSection(title: "Fajr & Isha Method") {
                     Picker("Method", selection: $settingsManager.fajrIshaMethod) {
-                        ForEach(calculationMethods, id: \.0) { id, name in Text(name).tag(id) }
+                        ForEach(calculationMethods, id: \.0) { method in
+                            Text(method.name).tag(method.id)
+                        }
                     }
+                    .pickerStyle(.menu)
                     .onChange(of: settingsManager.fajrIshaMethod) { _ in
                         Task { await manager.fetchPrayerTimes() }
                         appDelegate?.refreshMenuBar()
@@ -868,9 +895,16 @@ struct PrayerTimesSettingsView: View {
 
                 SettingsSection(title: "Asr Method") {
                     Picker("Method", selection: $settingsManager.asrMethod) {
-                        Text("Standard").tag(AsrMethod.standard)
-                        Text("Hanbali").tag(AsrMethod.hanbali)
+                        Text("Standard (Shafi'i, Maliki, Hanbali)").tag(AsrMethod.standard)
+                        Text("Hanbali (later time)").tag(AsrMethod.hanbali)
                     }
+                    .pickerStyle(.menu)
+                }
+                
+                // Info text
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Methods differ in the angle of the sun below the horizon used to calculate Fajr and Isha times.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text("Lower angle = earlier Fajr / later Isha.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
                 }
             }.padding()
         }
