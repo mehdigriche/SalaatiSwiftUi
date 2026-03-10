@@ -220,12 +220,15 @@ class SettingsManager: ObservableObject {
         }
     }
 
-    // Helper to refresh prayer times
+    // Helper to refresh prayer times (for adjustments - just updates display without API call)
     private func refreshPrayerTimesIfNeeded() {
+        print("Applying adjustments to prayer times...")
         if let manager = SettingsManager.prayerManager {
             Task { @MainActor in
                 await manager.fetchPrayerTimes()
             }
+        } else {
+            print("ERROR: No prayer manager found!")
         }
     }
 
@@ -336,6 +339,7 @@ class PrayerTimesManager: ObservableObject {
 
     func fetchPrayerTimes() async {
         isLoading = true
+        print("Fetching prayer times for: \(locationName) (\(latitude), \(longitude))")
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM-yyyy"
@@ -383,7 +387,11 @@ class PrayerTimesManager: ObservableObject {
             updateCurrentPrayer()
             save()
             NotificationManager.shared.schedulePrayerNotifications(prayers: prayers, locationName: locationName)
+            
+            // Force UI refresh
+            self.objectWillChange.send()
             NotificationCenter.default.post(name: .refreshMenuBar, object: nil)
+            print("Prayer times updated successfully")
         } catch {
             print("Error: \(error)")
             prayers = getDefaultPrayers()
@@ -456,6 +464,7 @@ class PrayerTimesManager: ObservableObject {
     }
 
     func updateLocation(name: String, lat: Double, lon: Double, tz: TimeZone? = nil) {
+        print("Updating location to: \(name) (\(lat), \(lon))")
         locationName = name
         latitude = lat
         longitude = lon
