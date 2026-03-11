@@ -484,7 +484,20 @@ struct DateInfo: Codable { let hijri: HijriDate }
 struct HijriDate: Codable { let day: String; let month: HijriMonth; let year: String }
 struct HijriMonth: Codable { let ar: String; let en: String? }
 struct Timings: Codable {
-    let fajr: String, sunrise: String, dhuhr: String, asr: String, maghrib: String, isha: String
+    let Fajr: String
+    let Sunrise: String
+    let Dhuhr: String
+    let Asr: String
+    let Maghrib: String
+    let Isha: String
+    
+    // Legacy lowercase support
+    var fajr: String { Fajr }
+    var sunrise: String { Sunrise }
+    var dhuhr: String { Dhuhr }
+    var asr: String { Asr }
+    var maghrib: String { Maghrib }
+    var isha: String { Isha }
 }
 
 // MARK: - Menu Bar Popover View
