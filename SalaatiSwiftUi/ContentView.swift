@@ -373,7 +373,10 @@ class PrayerTimesManager: ObservableObject {
 
             // Apply hijri adjustment
             let hijriDay = (Int(response.data.date.hijri.day) ?? 0) + settings.hijriAdjustment
-            hijriDate = "\(hijriDay) \(response.data.date.hijri.month.ar) \(response.data.date.hijri.year)"
+            let hijriMonthAr = response.data.date.hijri.month.ar
+            let hijriMonthEn = response.data.date.hijri.month.en ?? ""
+            hijriDate = "\(hijriDay) \(hijriMonthAr) \(response.data.date.hijri.year)"
+            print("Hijri date: \(hijriDate)")
 
             prayers = [
                 Prayer(name: "Fajr", arabicName: "فجر", time: parseTime(timings.fajr, calendar: calendar, today: today, adjustment: settings.fajrAdjustment), isEnabled: true),
@@ -479,7 +482,7 @@ struct AlAdhanResponse: Codable { let data: AlAdhanData }
 struct AlAdhanData: Codable { let timings: Timings?; let date: DateInfo }
 struct DateInfo: Codable { let hijri: HijriDate }
 struct HijriDate: Codable { let day: String; let month: HijriMonth; let year: String }
-struct HijriMonth: Codable { let ar: String }
+struct HijriMonth: Codable { let ar: String; let en: String? }
 struct Timings: Codable {
     let fajr: String, sunrise: String, dhuhr: String, asr: String, maghrib: String, isha: String
 }
@@ -525,9 +528,14 @@ struct MenuBarPopoverView: View {
     }
 
     private var headerView: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             HStack { Image(systemName: "location.fill").font(.caption); Text(manager.locationName).font(.system(size: 13, weight: .medium)) }.foregroundColor(.white.opacity(0.7))
-            if !manager.hijriDate.isEmpty { Text(manager.hijriDate).font(.system(size: 18, weight: .bold)).foregroundColor(.white) }
+            if !manager.hijriDate.isEmpty { 
+                VStack(spacing: 2) {
+                    Text(manager.hijriDate).font(.system(size: 20, weight: .bold)).foregroundColor(.white)
+                    Text("Hijri").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                }
+            }
             Text(formattedDate()).font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
         }.padding(.top, 16).padding(.bottom, 8)
     }
