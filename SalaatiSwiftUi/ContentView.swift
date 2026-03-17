@@ -3,6 +3,7 @@ import AppKit
 import UserNotifications
 import ServiceManagement
 import AVFoundation
+import UniformTypeIdentifiers
 
 // MARK: - App Entry Point
 @main
@@ -237,6 +238,12 @@ class SettingsManager: ObservableObject {
             updateLoginItem()
         }
     }
+    @Published var showBackground: Bool {
+        didSet { UserDefaults.standard.set(showBackground, forKey: "showBackground") }
+    }
+    @Published var backgroundOpacity: Double {
+        didSet { UserDefaults.standard.set(backgroundOpacity, forKey: "backgroundOpacity") }
+    }
 
     @Published var asrMethod: AsrMethod {
         didSet { UserDefaults.standard.set(asrMethod.rawValue, forKey: "asrMethod") }
@@ -366,6 +373,8 @@ class SettingsManager: ObservableObject {
         showIcon = UserDefaults.standard.object(forKey: "showIcon") as? Bool ?? true
         arabicMode = UserDefaults.standard.object(forKey: "arabicMode") as? Bool ?? true
         startAtLogin = UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? false
+        showBackground = UserDefaults.standard.object(forKey: "showBackground") as? Bool ?? true
+        backgroundOpacity = UserDefaults.standard.object(forKey: "backgroundOpacity") as? Double ?? 0.25
         asrMethod = AsrMethod(rawValue: UserDefaults.standard.integer(forKey: "asrMethod")) ?? .standard
         fajrIshaMethod = UserDefaults.standard.object(forKey: "fajrIshaMethod") as? Int ?? 3
 
@@ -680,6 +689,95 @@ struct Timings: Codable {
     }
 }
 
+// MARK: - App Background
+// Base64 fallback — paste your base64 image string here if you prefer embedding
+private let kBackgroundImageBase64: String = ""
+
+struct AppBackground: View {
+    @ObservedObject private var settings = SettingsManager.shared
+    @State private var loadedImage: NSImage? = nil
+    @State private var isLoading = false
+
+    private var imagePath: String? {
+        guard settings.showBackground else { return nil }
+        if let path = UserDefaults.standard.string(forKey: "backgroundImagePath"), !path.isEmpty {
+            return path
+        }
+        return nil
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]),
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            if settings.showBackground {
+                if isLoading {
+                    // Subtle shimmer placeholder while image loads
+                    Rectangle()
+                        .fill(Color.white.opacity(0.04))
+                        .ignoresSafeArea()
+                        .overlay(
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.7)
+                                .opacity(0.4)
+                        )
+                } else if let img = loadedImage {
+                    Image(nsImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .opacity(settings.backgroundOpacity)
+                        .ignoresSafeArea()
+                        .clipped()
+                        .allowsHitTesting(false)
+                        .transition(.opacity.animation(.easeIn(duration: 0.4)))
+                } else if !kBackgroundImageBase64.isEmpty {
+                    // Base64 fallback (already in memory, no async needed)
+                    if let data = Data(base64Encoded: kBackgroundImageBase64, options: .ignoreUnknownCharacters),
+                       let img = NSImage(data: data) {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .opacity(settings.backgroundOpacity)
+                            .ignoresSafeArea()
+                            .clipped()
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+        }
+        .task(id: imagePath) {
+            await loadImage(path: imagePath)
+        }
+    }
+
+    private func loadImage(path: String?) async {
+        guard let path else {
+            loadedImage = nil
+            return
+        }
+        // Already loaded the same image
+        if loadedImage != nil,
+           UserDefaults.standard.string(forKey: "backgroundImagePath") == path { return }
+
+        isLoading = true
+        loadedImage = nil
+
+        let img = await Task.detached(priority: .background) {
+            NSImage(contentsOfFile: path)
+        }.value
+
+        withAnimation { isLoading = false }
+        if let img {
+            withAnimation(.easeIn(duration: 0.4)) { loadedImage = img }
+        }
+    }
+}
+
 // MARK: - Menu Bar Popover View
 struct MenuBarPopoverView: View {
     @ObservedObject var manager: PrayerTimesManager
@@ -690,30 +788,28 @@ struct MenuBarPopoverView: View {
     @State private var glowPulse = false
 
     var body: some View {
-        ZStack {
-            LinearGradient(gradient: Gradient(colors: [Color(hex: "1A1A2E"), Color(hex: "16213E")]), startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+        VStack(spacing: 0) {
+            headerView
 
-            VStack(spacing: 0) {
-                headerView
-
-                // Loading indicator
-                if manager.isLoading {
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        Text("Loading...").font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
-                    }.padding(.vertical, 20)
-                } else if !manager.prayers.isEmpty {
-                    nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12)
-                    prayerTimesList
-                } else {
-                    Text("No prayer times available").foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
-                }
-
-                footerView
+            // Loading indicator
+            if manager.isLoading {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    Text("Loading...").font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                }.padding(.vertical, 20)
+            } else if !manager.prayers.isEmpty {
+                nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12)
+                prayerTimesList
+            } else {
+                Text("No prayer times available").foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
             }
-        }.frame(width: 380, height: 550)
+
+            footerView
+        }
+        .frame(width: 380, height: 550)
+        .background(AppBackground())
         .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
             appDelegate?.refreshMenuBar()
         }
@@ -921,28 +1017,27 @@ struct SettingsView: View {
     @State private var selectedTab = 0
 
     var body: some View {
-        ZStack {
-            Color(hex: "1A1A2E").ignoresSafeArea()
-            VStack(spacing: 0) {
-                Picker("", selection: $selectedTab) {
-                    Text("General").tag(0)
-                    Text("Location").tag(1)
-                    Text("Prayer").tag(2)
-                    Text("Adjust").tag(3)
-                    Text("Athan").tag(4)
-                }.pickerStyle(.segmented).padding()
+        VStack(spacing: 0) {
+            Picker("", selection: $selectedTab) {
+                Text("General").tag(0)
+                Text("Location").tag(1)
+                Text("Prayer").tag(2)
+                Text("Adjust").tag(3)
+                Text("Athan").tag(4)
+            }.pickerStyle(.segmented).padding()
 
-                TabView(selection: $selectedTab) {
-                    GeneralSettingsView(appDelegate: appDelegate).tag(0)
-                    LocationSettingsView(manager: manager, appDelegate: appDelegate).tag(1)
-                    PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate).tag(2)
-                    AdjustmentsSettingsView(manager: manager).tag(3)
-                    AthanSettingsView().tag(4)
-                }.tabViewStyle(.automatic)
+            TabView(selection: $selectedTab) {
+                GeneralSettingsView(appDelegate: appDelegate).tag(0)
+                LocationSettingsView(manager: manager, appDelegate: appDelegate).tag(1)
+                PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate).tag(2)
+                AdjustmentsSettingsView(manager: manager).tag(3)
+                AthanSettingsView().tag(4)
+            }.tabViewStyle(.automatic)
 
-                HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
-            }
-        }.frame(width: 380, height: 500)
+            HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
+        }
+        .frame(width: 380, height: 500)
+        .background(AppBackground())
         .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
             // Force refresh when location/prayer times change
         }
@@ -984,6 +1079,66 @@ struct GeneralSettingsView: View {
 
                 SettingsSection(title: "Startup") {
                     Toggle("Start at Login", isOn: $settingsManager.startAtLogin).tint(Color(hex: "E94560"))
+                }
+
+                SettingsSection(title: "Background Image") {
+                    VStack(spacing: 10) {
+                        Toggle("Show Background", isOn: $settingsManager.showBackground).tint(Color(hex: "E94560"))
+
+                        if settingsManager.showBackground {
+                            // Opacity slider
+                            HStack(spacing: 8) {
+                                Text("Opacity").font(.system(size: 13)).foregroundColor(.white)
+                                Slider(value: $settingsManager.backgroundOpacity, in: 0.05...0.6)
+                                    .tint(Color(hex: "E94560"))
+                                Text("\(Int(settingsManager.backgroundOpacity * 100))%")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color(hex: "E94560"))
+                                    .frame(width: 36, alignment: .trailing)
+                            }
+
+                            // Current image name
+                            if let path = UserDefaults.standard.string(forKey: "backgroundImagePath"), !path.isEmpty {
+                                HStack {
+                                    Image(systemName: "photo").foregroundColor(.white.opacity(0.5)).font(.system(size: 11))
+                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button {
+                                        UserDefaults.standard.removeObject(forKey: "backgroundImagePath")
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.white.opacity(0.4))
+                                            .font(.system(size: 13))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Remove background image")
+                                }
+                            }
+
+                            // Pick image button
+                            Button {
+                                let panel = NSOpenPanel()
+                                panel.allowedContentTypes = [.jpeg, .png, .heic, .webP, .bmp, .tiff]
+                                panel.allowsMultipleSelection = false
+                                panel.canChooseDirectories = false
+                                panel.message = "Choose a background image"
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    UserDefaults.standard.set(url.path, forKey: "backgroundImagePath")
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "photo.badge.plus")
+                                    Text(UserDefaults.standard.string(forKey: "backgroundImagePath") != nil ? "Change Image" : "Choose Image")
+                                }
+                                .font(.system(size: 13))
+                                .foregroundColor(Color(hex: "E94560"))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
             }.padding()
         }
