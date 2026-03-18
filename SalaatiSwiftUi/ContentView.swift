@@ -767,12 +767,12 @@ struct AppBackground: View {
         isLoading = true
         loadedImage = nil
 
-        let img = await Task.detached(priority: .background) {
-            NSImage(contentsOfFile: path)
+        let imageData = await Task.detached(priority: .background) {
+            try? Data(contentsOf: URL(fileURLWithPath: path))
         }.value
 
         withAnimation { isLoading = false }
-        if let img {
+        if let data = imageData, let img = NSImage(data: data) {
             withAnimation(.easeIn(duration: 0.4)) { loadedImage = img }
         }
     }
@@ -785,6 +785,7 @@ struct MenuBarPopoverView: View {
     @ObservedObject private var player = AthanPlayer.shared
     weak var appDelegate: AppDelegate?
     @State private var showingSettings = false
+    @State private var showingAbout = false
     @State private var glowPulse = false
 
     var body: some View {
@@ -871,7 +872,6 @@ struct MenuBarPopoverView: View {
                     .scaleEffect(isAthanPlaying ? (glowPulse ? 1.04 : 1.0) : 1.0)
 
                 if isAthanPlaying {
-                    // Show actual prayer time when ringing, not a countdown
                     Text(timeFormatter.string(from: prayer.time))
                         .font(.system(size: 22, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
@@ -883,6 +883,27 @@ struct MenuBarPopoverView: View {
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.5))
                 }
+
+                // Stop button — always in hierarchy, visible only when athan plays
+                Button(action: { AthanPlayer.shared.stop() }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold))
+                        Text("Stop Athan").font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(Color(hex: "E94560"))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color(hex: "E94560").opacity(0.15))
+                            .overlay(Capsule().strokeBorder(Color(hex: "E94560").opacity(0.5), lineWidth: 1))
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+                .opacity(isAthanPlaying ? 1 : 0)
+                .frame(height: isAthanPlaying ? nil : 0)
+                .clipped()
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -983,12 +1004,49 @@ struct MenuBarPopoverView: View {
     }
 
     private var footerView: some View {
-        HStack(spacing: 20) {
-            Button(action: { showingSettings = true }) { HStack(spacing: 4) { Image(systemName: "gearshape"); Text("Settings") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
-            Button(action: { Task { await manager.fetchPrayerTimes() } }) { HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text("Refresh") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
-            Button(action: { NSApplication.shared.terminate(nil) }) { HStack(spacing: 4) { Image(systemName: "power"); Text("Quit") }.font(.system(size: 12)).foregroundColor(.white.opacity(0.7)) }.buttonStyle(.plain)
-        }.padding(.vertical, 12).padding(.horizontal, 16).background(Color.black.opacity(0.2))
+        VStack(spacing: 0) {
+            // Stop bar — slides in when athan is playing
+            if player.isPlaying {
+                Button(action: { AthanPlayer.shared.stop() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "stop.circle.fill").font(.system(size: 14))
+                        Text("Stop Athan")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color(hex: "E94560"))
+                }
+                .buttonStyle(.plain)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            HStack(spacing: 20) {
+                Button(action: { showingSettings = true }) {
+                    HStack(spacing: 4) { Image(systemName: "gearshape"); Text("Settings") }
+                        .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                }.buttonStyle(.plain)
+                Button(action: { Task { await manager.fetchPrayerTimes() } }) {
+                    HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text("Refresh") }
+                        .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                }.buttonStyle(.plain)
+                Button(action: { showingAbout = true }) {
+                    HStack(spacing: 4) { Image(systemName: "info.circle"); Text("About") }
+                        .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                }.buttonStyle(.plain)
+                Button(action: { NSApplication.shared.terminate(nil) }) {
+                    HStack(spacing: 4) { Image(systemName: "power"); Text("Quit") }
+                        .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                }.buttonStyle(.plain)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(Color.black.opacity(0.2))
+        }
+        .animation(.easeInOut(duration: 0.25), value: player.isPlaying)
         .sheet(isPresented: $showingSettings) { SettingsView(manager: manager, appDelegate: appDelegate) }
+        .sheet(isPresented: $showingAbout) { AboutView() }
     }
 
     private func isCurrentPrayer(_ prayer: Prayer) -> Bool {
@@ -1778,6 +1836,146 @@ struct AthanSettingsView: View {
                 .opacity(isEnabled ? 1 : 0.4)
             }
         }
+    }
+}
+
+// MARK: - About View
+struct AboutView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    // ── Update these two lines ──────────────────────────────────────────
+    private let donateURL  = "https://paypal.me/YOUR_LINK_HERE"   // ← your PayPal / Ko-fi
+    private let portfolioURL = "https://any.ma/portfolio/mehdigriche/"
+    // ────────────────────────────────────────────────────────────────────
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 10) {
+                if let logo = NSImage(named: "AppLogo") {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 80, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .shadow(color: Color(hex: "E94560").opacity(0.1), radius: 12)
+                        .padding(.top, 32)
+                } else {
+                    Image(systemName: "moon.stars.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(Color(hex: "E94560"))
+                        .padding(.top, 32)
+                }
+
+                Text("Salaati")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
+
+                Text("Prayer Times for macOS")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.5))
+
+                Text("Version 1.0")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.3))
+                    .padding(.bottom, 8)
+            }
+
+            Divider().background(Color.white.opacity(0.08))
+
+            // Developer card
+            VStack(spacing: 12) {
+                Text("Made with ♥ by")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.4))
+
+                Button {
+                    NSWorkspace.shared.open(URL(string: portfolioURL)!)
+                } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: "E94560").opacity(0.2))
+                                .frame(width: 44, height: 44)
+                            Text("M")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(Color(hex: "E94560"))
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Mehdi Griche")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                            Text("Mobile Developer")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+
+            Divider().background(Color.white.opacity(0.08))
+
+            // Description
+            VStack(spacing: 8) {
+                Text("Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.45))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+
+            // Donate button
+            Button {
+                NSWorkspace.shared.open(URL(string: donateURL)!)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "cup.and.saucer.fill")
+                        .font(.system(size: 13))
+                    Text("Buy Me a Coffee — Ko-fi")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(hex: "E94560"))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+
+            // Prayer times API credit
+            Text("Prayer times powered by AlAdhan API")
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.25))
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+            // Done
+            Button("Done") { dismiss() }
+                .foregroundColor(Color(hex: "E94560"))
+                .font(.system(size: 13))
+                .padding(.bottom, 20)
+        }
+        .frame(width: 340)
+        .background(
+            ZStack {
+                Color(hex: "1A1A2E")
+                AppBackground()
+            }
+        )
     }
 }
 
