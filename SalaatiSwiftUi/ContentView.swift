@@ -135,9 +135,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if let p = prayer {
                 if settings.prayerNameDisplay == .full {
-                    text += settings.arabicMode ? p.arabicName : p.name
+                    text += p.localizedName
                 } else if settings.prayerNameDisplay == .abbreviation {
-                    text += String((settings.arabicMode ? p.arabicName : p.name).prefix(3))
+                    text += String((p.localizedName).prefix(3))
                 }
 
                 if athanPlaying {
@@ -460,6 +460,130 @@ struct Prayer: Identifiable, Codable, Equatable {
     }
 
     static func == (lhs: Prayer, rhs: Prayer) -> Bool { lhs.id == rhs.id }
+
+    /// Returns the display name based on the current language setting
+    var localizedName: String {
+        SettingsManager.shared.arabicMode ? arabicName : name
+    }
+}
+
+/// Translates an English prayer key to the display name based on language setting.
+/// Use this for hardcoded strings in settings views that don't have a Prayer object.
+func prayerDisplayName(_ englishName: String) -> String {
+    guard SettingsManager.shared.arabicMode else { return englishName }
+    switch englishName {
+    case "Fajr":    return "فجر"
+    case "Sunrise": return "شروق"
+    case "Dhuhr":   return "ظهر"
+    case "Asr":     return "عصر"
+    case "Maghrib": return "مغرب"
+    case "Isha":    return "عشاء"
+    default:        return englishName
+    }
+}
+
+/// Main UI string localizer — returns Arabic when arabicMode is enabled
+func L(_ english: String) -> String {
+    guard SettingsManager.shared.arabicMode else { return english }
+    switch english {
+    // Tabs
+    case "General":             return "عام"
+    case "Location":            return "الموقع"
+    case "Prayer":              return "الصلاة"
+    case "Adjust":              return "ضبط"
+    case "Athan":               return "الأذان"
+    case "Done":                return "تم"
+    case "Settings":            return "الإعدادات"
+    case "Refresh":             return "تحديث"
+    case "About":               return "عن التطبيق"
+    case "Quit":                return "خروج"
+    // General settings
+    case "Menu Bar Display":    return "شريط القائمة"
+    case "Show Next Prayer":    return "عرض الصلاة القادمة"
+    case "Show Icon":           return "عرض الأيقونة"
+    case "Prayer Name":         return "اسم الصلاة"
+    case "Full":                return "كامل"
+    case "Abbrev":              return "مختصر"
+    case "None":                return "بدون"
+    case "Prayer Time":         return "وقت الصلاة"
+    case "Countdown":           return "عداد تنازلي"
+    case "Time":                return "الوقت"
+    case "Language":            return "اللغة"
+    case "English":             return "English"
+    case "Startup":             return "التشغيل"
+    case "Start at Login":      return "تشغيل عند بدء الجهاز"
+    case "Background Image":    return "صورة الخلفية"
+    case "Show Background":     return "عرض الخلفية"
+    case "Opacity":             return "الشفافية"
+    case "Choose Image":        return "اختر صورة"
+    case "Change Image":        return "تغيير الصورة"
+    case "Remove background image": return "حذف الخلفية"
+    // Prayer method settings
+    case "Current Method":      return "الطريقة الحالية"
+    case "Fajr & Isha Method":  return "طريقة الفجر والعشاء"
+    case "Asr Method":          return "طريقة العصر"
+    case "Fajr angle":          return "زاوية الفجر"
+    case "Isha angle":          return "زاوية العشاء"
+    case "Used in: ":           return "تستخدم في: "
+    case "Standard — Shafi'i, Maliki, Hanbali": return "المعيار — شافعي، مالكي، حنبلي"
+    case "Hanafi (later time)": return "حنفي (وقت متأخر)"
+    case "Methods differ in the angle of the sun below the horizon used to calculate Fajr and Isha times.":
+        return "تختلف الطرق في زاوية الشمس تحت الأفق لحساب أوقات الفجر والعشاء."
+    case "Lower angle = earlier Fajr / later Isha.":
+        return "الزاوية الأصغر = فجر أبكر / عشاء أمتأخر."
+    // Adjustments
+    case "Prayer Time Adjustments (minutes)": return "ضبط أوقات الصلاة (دقائق)"
+    case "Hijri Date Adjustment (days)":      return "ضبط التاريخ الهجري (أيام)"
+    case "Days":                return "أيام"
+    case "Positive = later date, Negative = earlier date":
+        return "موجب = تاريخ متأخر، سالب = تاريخ مبكر"
+    case "Reset All Adjustments": return "إعادة ضبط الكل"
+    case "Use these adjustments if prayer times seem inaccurate for your location.":
+        return "استخدم هذه الإعدادات إذا بدت الأوقات غير دقيقة لموقعك."
+    case "Changes apply immediately.": return "تُطبق التغييرات فوراً."
+    // Athan settings
+    case "Audio":               return "الصوت"
+    case "Silent mode":         return "وضع الصمت"
+    case "Athan Reciter":       return "قارئ الأذان"
+    case "Reminders":           return "التذكيرات"
+    case "Reminder":            return "تذكير"
+    case "Volume":              return "الصوت"
+    case "Play dua after adhan": return "تشغيل الدعاء بعد الأذان"
+    case "Notifications":       return "الإشعارات"
+    case "Configure in System Settings": return "إعداد في تفضيلات النظام"
+    case "Athan audio streams from cdn.aladhan.com — no internet, no sound.":
+        return "صوت الأذان من cdn.aladhan.com — بدون انترنت، بدون صوت."
+    case "Play":                return "تشغيل"
+    case "Stop":                return "إيقاف"
+    // Location
+    case "Current Location (IP)": return "الموقع الحالي (IP)"
+    case "Use My Location":     return "استخدم موقعي"
+    case "Search City":         return "بحث عن مدينة"
+    case "Popular Cities":      return "المدن الشهيرة"
+    case "Search Results":      return "نتائج البحث"
+    case "City name":           return "اسم المدينة"
+    // Popover
+    case "Next Prayer":         return "الصلاة القادمة"
+    case "Athan · Now":         return "الأذان · الآن"
+    case "All prayers completed": return "انتهت أوقات الصلاة"
+    case "No prayer times available": return "لا توجد أوقات صلاة"
+    case "Loading...":          return "جارٍ التحميل..."
+    case "Stop Athan":          return "إيقاف الأذان"
+    case "Athan on — tap to mute": return "الأذان مفعّل — اضغط للكتم"
+    case "Athan off — tap to enable": return "الأذان معطّل — اضغط للتفعيل"
+    case "Hijri":               return "هجري"
+    // About
+    case "Mobile Developer":    return "مطور تطبيقات"
+    case "Prayer Times for macOS": return "أوقات الصلاة لـ macOS"
+    case "Version 1.0":         return "الإصدار 1.0"
+    case "Made with ♥ by":      return "صُنع بـ ♥ من قِبل"
+    case "Buy Me a Coffee — Ko-fi": return "ادعمني على Ko-fi ☕"
+    case "Prayer times powered by AlAdhan API": return "أوقات الصلاة من AlAdhan API"
+    case "Caching ":            return "تخزين "
+    case "Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS.":
+        return "صلاتي يوفر أوقات صلاة دقيقة، وإشعارات الأذان، وتجربة جميلة في شريط القائمة — مصمم لمستخدمي macOS المسلمين."
+    default:                    return english
+    }
 }
 
 // MARK: - Prayer Times Manager
@@ -581,7 +705,7 @@ class PrayerTimesManager: ObservableObject {
             // Store raw (unadjusted) times — adjustments are applied in applyAdjustmentsLocally()
             rawPrayers = [
                 Prayer(name: "Fajr",    arabicName: "فجر",  time: parseTime(timings.fajr,    calendar: calendar, today: today), isEnabled: true),
-                Prayer(name: "Sunrise", arabicName: "شروق", time: parseTime(timings.sunrise, calendar: calendar, today: today), isEnabled: false),
+                Prayer(name: "Sunrise", arabicName: "شروق", time: parseTime(timings.sunrise, calendar: calendar, today: today), isEnabled: true),
                 Prayer(name: "Dhuhr",   arabicName: "ظهر",  time: parseTime(timings.dhuhr,   calendar: calendar, today: today), isEnabled: true),
                 Prayer(name: "Asr",     arabicName: "عصر",  time: parseTime(timings.asr,     calendar: calendar, today: today), isEnabled: true),
                 Prayer(name: "Maghrib", arabicName: "مغرب", time: parseTime(timings.maghrib, calendar: calendar, today: today), isEnabled: true),
@@ -612,7 +736,7 @@ class PrayerTimesManager: ObservableObject {
         let today = Date()
         return [
             Prayer(name: "Fajr", arabicName: "فجر", time: calendar.date(bySettingHour: 5, minute: 26, second: 0, of: today)!, isEnabled: true),
-            Prayer(name: "Sunrise", arabicName: "شروق", time: calendar.date(bySettingHour: 6, minute: 49, second: 0, of: today)!, isEnabled: false),
+            Prayer(name: "Sunrise", arabicName: "شروق", time: calendar.date(bySettingHour: 6, minute: 49, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Dhuhr", arabicName: "ظهر", time: calendar.date(bySettingHour: 12, minute: 41, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Asr", arabicName: "عصر", time: calendar.date(bySettingHour: 15, minute: 30, second: 0, of: today)!, isEnabled: true),
             Prayer(name: "Maghrib", arabicName: "مغرب", time: calendar.date(bySettingHour: 18, minute: 33, second: 0, of: today)!, isEnabled: true),
@@ -700,6 +824,14 @@ struct AppBackground: View {
 
     private var imagePath: String? {
         guard settings.showBackground else { return nil }
+        // Prefer bookmark (sandbox-safe, persists across launches)
+        if let bookmarkData = UserDefaults.standard.data(forKey: "backgroundImageBookmark") {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                return url.path
+            }
+        }
+        // Fallback to plain path (non-sandboxed builds)
         if let path = UserDefaults.standard.string(forKey: "backgroundImagePath"), !path.isEmpty {
             return path
         }
@@ -756,25 +888,34 @@ struct AppBackground: View {
     }
 
     private func loadImage(path: String?) async {
-        guard let path else {
-            loadedImage = nil
-            return
-        }
-        // Already loaded the same image
+        guard let path else { loadedImage = nil; return }
         if loadedImage != nil,
            UserDefaults.standard.string(forKey: "backgroundImagePath") == path { return }
 
         isLoading = true
         loadedImage = nil
 
-        let imageData = await Task.detached(priority: .background) {
+        // Start security-scoped access if we have a bookmark
+        var scopedURL: URL? = nil
+        if let bookmarkData = UserDefaults.standard.data(forKey: "backgroundImageBookmark") {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                url.startAccessingSecurityScopedResource()
+                scopedURL = url
+            }
+        }
+
+        // Load data on background thread (avoids NSImage Sendable issue pre-macOS 14)
+        let imgData = await Task.detached(priority: .background) {
             try? Data(contentsOf: URL(fileURLWithPath: path))
         }.value
 
+        scopedURL?.stopAccessingSecurityScopedResource()
+
+        let img: NSImage? = imgData.flatMap { NSImage(data: $0) }
+
         withAnimation { isLoading = false }
-        if let data = imageData, let img = NSImage(data: data) {
-            withAnimation(.easeIn(duration: 0.4)) { loadedImage = img }
-        }
+        if let img { withAnimation(.easeIn(duration: 0.4)) { loadedImage = img } }
     }
 }
 
@@ -798,13 +939,13 @@ struct MenuBarPopoverView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    Text("Loading...").font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
+                    Text(L("Loading...")).font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.padding(.vertical, 20)
             } else if !manager.prayers.isEmpty {
                 nextPrayerCard.padding(.horizontal, 16).padding(.vertical, 12)
                 prayerTimesList
             } else {
-                Text("No prayer times available").foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
+                Text(L("No prayer times available")).foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
             }
 
             footerView
@@ -826,7 +967,7 @@ struct MenuBarPopoverView: View {
             if !manager.hijriDate.isEmpty {
                 VStack(spacing: 2) {
                     Text(manager.hijriDate).font(.system(size: 20, weight: .bold)).foregroundColor(.white)
-                    Text("Hijri").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text(L("Hijri")).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
                 }
             }
             Text(formattedDate()).font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
@@ -844,7 +985,7 @@ struct MenuBarPopoverView: View {
             : manager.getNextPrayer()
 
         if let prayer = cardPrayer {
-            let displayName = settings.arabicMode ? prayer.arabicName : prayer.name
+            let displayName = prayer.localizedName
 
             VStack(spacing: 4) {
                 // Label row
@@ -861,7 +1002,7 @@ struct MenuBarPopoverView: View {
                                 .foregroundColor(Color(hex: "E94560"))
                         }
                     }
-                    Text(isAthanPlaying ? "Athan · Now" : "Next Prayer")
+                    Text(isAthanPlaying ? L("Athan · Now") : L("Next Prayer"))
                         .font(.system(size: 11))
                         .foregroundColor(isAthanPlaying ? Color(hex: "E94560") : .white.opacity(0.6))
                 }
@@ -888,7 +1029,7 @@ struct MenuBarPopoverView: View {
                 Button(action: { AthanPlayer.shared.stop() }) {
                     HStack(spacing: 5) {
                         Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold))
-                        Text("Stop Athan").font(.system(size: 12, weight: .semibold))
+                        Text(L("Stop Athan")).font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(Color(hex: "E94560"))
                     .padding(.horizontal, 18)
@@ -935,7 +1076,7 @@ struct MenuBarPopoverView: View {
                 }
             }
         } else {
-            VStack { Text("All prayers completed").foregroundColor(.white.opacity(0.7)) }
+            VStack { Text(L("All prayers completed")).foregroundColor(.white.opacity(0.7)) }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1)))
@@ -946,7 +1087,7 @@ struct MenuBarPopoverView: View {
         ScrollView {
             VStack(spacing: 6) {
                 ForEach(manager.prayers) { prayer in
-                    let displayName = settings.arabicMode ? prayer.arabicName : prayer.name
+                    let displayName = prayer.localizedName
                     let athanOn = prayer.name != "Sunrise" && settings.athanEnabled(for: prayer.name)
                     let isCurrent = isCurrentPrayer(prayer)
 
@@ -972,7 +1113,7 @@ struct MenuBarPopoverView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .help(athanOn ? "Athan on — tap to mute" : "Athan off — tap to enable")
+                            .help(athanOn ? L("Athan on — tap to mute") : L("Athan off — tap to enable"))
                         }
 
                         // Time
@@ -1010,7 +1151,7 @@ struct MenuBarPopoverView: View {
                 Button(action: { AthanPlayer.shared.stop() }) {
                     HStack(spacing: 6) {
                         Image(systemName: "stop.circle.fill").font(.system(size: 14))
-                        Text("Stop Athan")
+                        Text(L("Stop Athan"))
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -1024,19 +1165,19 @@ struct MenuBarPopoverView: View {
 
             HStack(spacing: 20) {
                 Button(action: { showingSettings = true }) {
-                    HStack(spacing: 4) { Image(systemName: "gearshape"); Text("Settings") }
+                    HStack(spacing: 4) { Image(systemName: "gearshape"); Text(L("Settings")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
                 Button(action: { Task { await manager.fetchPrayerTimes() } }) {
-                    HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text("Refresh") }
+                    HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text(L("Refresh")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
                 Button(action: { showingAbout = true }) {
-                    HStack(spacing: 4) { Image(systemName: "info.circle"); Text("About") }
+                    HStack(spacing: 4) { Image(systemName: "info.circle"); Text(L("About")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
                 Button(action: { NSApplication.shared.terminate(nil) }) {
-                    HStack(spacing: 4) { Image(systemName: "power"); Text("Quit") }
+                    HStack(spacing: 4) { Image(systemName: "power"); Text(L("Quit")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
             }
@@ -1057,6 +1198,9 @@ struct MenuBarPopoverView: View {
     private func formattedDate() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMMM d, yyyy"
+        formatter.locale = SettingsManager.shared.arabicMode
+            ? Locale(identifier: "ar_MA")
+            : Locale(identifier: "en_US")
         return formatter.string(from: Date())
     }
 
@@ -1077,11 +1221,11 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $selectedTab) {
-                Text("General").tag(0)
-                Text("Location").tag(1)
-                Text("Prayer").tag(2)
-                Text("Adjust").tag(3)
-                Text("Athan").tag(4)
+                Text(L("General")).tag(0)
+                Text(L("Location")).tag(1)
+                Text(L("Prayer")).tag(2)
+                Text(L("Adjust")).tag(3)
+                Text(L("Athan")).tag(4)
             }.pickerStyle(.segmented).padding()
 
             TabView(selection: $selectedTab) {
@@ -1092,7 +1236,7 @@ struct SettingsView: View {
                 AthanSettingsView().tag(4)
             }.tabViewStyle(.automatic)
 
-            HStack { Spacer(); Button("Done") { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
+            HStack { Spacer(); Button(L("Done")) { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
         }
         .frame(width: 380, height: 500)
         .background(AppBackground())
@@ -1110,43 +1254,46 @@ struct GeneralSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                SettingsSection(title: "Menu Bar Display") {
-                    Toggle("Show Next Prayer", isOn: $settingsManager.showNextPrayer).tint(Color(hex: "E94560"))
-                    Toggle("Show Icon", isOn: $settingsManager.showIcon).tint(Color(hex: "E94560"))
+                SettingsSection(title: L("Menu Bar Display")) {
+                    Toggle(L("Show Next Prayer"), isOn: $settingsManager.showNextPrayer).tint(Color(hex: "E94560"))
+                    Toggle(L("Show Icon"), isOn: $settingsManager.showIcon).tint(Color(hex: "E94560"))
                 }
 
-                SettingsSection(title: "Prayer Name") {
+                SettingsSection(title: L("Prayer Name")) {
                     Picker("Display", selection: $settingsManager.prayerNameDisplay) {
-                        Text("Full").tag(PrayerNameDisplay.full)
-                        Text("Abbrev").tag(PrayerNameDisplay.abbreviation)
-                        Text("None").tag(PrayerNameDisplay.none)
+                        Text(L("Full")).tag(PrayerNameDisplay.full)
+                        Text(L("Abbrev")).tag(PrayerNameDisplay.abbreviation)
+                        Text(L("None")).tag(PrayerNameDisplay.none)
                     }.pickerStyle(.segmented)
                 }
 
-                SettingsSection(title: "Prayer Time") {
+                SettingsSection(title: L("Prayer Time")) {
                     Picker("Display", selection: $settingsManager.prayerTimeDisplay) {
-                        Text("Countdown").tag(PrayerTimeDisplay.countdown)
-                        Text("Time").tag(PrayerTimeDisplay.time)
-                        Text("None").tag(PrayerTimeDisplay.none)
+                        Text(L("Countdown")).tag(PrayerTimeDisplay.countdown)
+                        Text(L("Time")).tag(PrayerTimeDisplay.time)
+                        Text(L("None")).tag(PrayerTimeDisplay.none)
                     }.pickerStyle(.segmented)
                 }
 
-                SettingsSection(title: "Language") {
-                    Toggle("Arabic Mode", isOn: $settingsManager.arabicMode).tint(Color(hex: "E94560"))
+                SettingsSection(title: L("Language")) {
+                    Picker("Display", selection: $settingsManager.arabicMode) {
+                        Text(L("English")).tag(false)
+                        Text("عربي  (Arabic)").tag(true)
+                    }.pickerStyle(.segmented)
                 }
 
-                SettingsSection(title: "Startup") {
-                    Toggle("Start at Login", isOn: $settingsManager.startAtLogin).tint(Color(hex: "E94560"))
+                SettingsSection(title: L("Startup")) {
+                    Toggle(L("Start at Login"), isOn: $settingsManager.startAtLogin).tint(Color(hex: "E94560"))
                 }
 
-                SettingsSection(title: "Background Image") {
+                SettingsSection(title: L("Background Image")) {
                     VStack(spacing: 10) {
-                        Toggle("Show Background", isOn: $settingsManager.showBackground).tint(Color(hex: "E94560"))
+                        Toggle(L("Show Background"), isOn: $settingsManager.showBackground).tint(Color(hex: "E94560"))
 
                         if settingsManager.showBackground {
                             // Opacity slider
                             HStack(spacing: 8) {
-                                Text("Opacity").font(.system(size: 13)).foregroundColor(.white)
+                                Text(L("Opacity")).font(.system(size: 13)).foregroundColor(.white)
                                 Slider(value: $settingsManager.backgroundOpacity, in: 0.05...0.6)
                                     .tint(Color(hex: "E94560"))
                                 Text("\(Int(settingsManager.backgroundOpacity * 100))%")
@@ -1156,15 +1303,17 @@ struct GeneralSettingsView: View {
                             }
 
                             // Current image name
-                            if let path = UserDefaults.standard.string(forKey: "backgroundImagePath"), !path.isEmpty {
+                            if let bookmarkData = UserDefaults.standard.data(forKey: "backgroundImageBookmark"),
+                               let url = { var s = false; return try? URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &s) }() {
                                 HStack {
                                     Image(systemName: "photo").foregroundColor(.white.opacity(0.5)).font(.system(size: 11))
-                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                    Text(url.lastPathComponent)
                                         .font(.system(size: 11))
                                         .foregroundColor(.white.opacity(0.5))
                                         .lineLimit(1)
                                     Spacer()
                                     Button {
+                                        UserDefaults.standard.removeObject(forKey: "backgroundImageBookmark")
                                         UserDefaults.standard.removeObject(forKey: "backgroundImagePath")
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
@@ -1184,12 +1333,16 @@ struct GeneralSettingsView: View {
                                 panel.canChooseDirectories = false
                                 panel.message = "Choose a background image"
                                 if panel.runModal() == .OK, let url = panel.url {
+                                    // Store both bookmark (sandbox-safe) and plain path (fallback)
+                                    if let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                                        UserDefaults.standard.set(bookmark, forKey: "backgroundImageBookmark")
+                                    }
                                     UserDefaults.standard.set(url.path, forKey: "backgroundImagePath")
                                 }
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "photo.badge.plus")
-                                    Text(UserDefaults.standard.string(forKey: "backgroundImagePath") != nil ? "Change Image" : "Choose Image")
+                                    Text(UserDefaults.standard.data(forKey: "backgroundImageBookmark") != nil ? L("Change Image") : L("Choose Image"))
                                 }
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(hex: "E94560"))
@@ -1243,7 +1396,7 @@ struct LocationSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                SettingsSection(title: "Current Location (IP)") {
+                SettingsSection(title: L("Current Location (IP)")) {
                     Button(action: useCurrentLocation) {
                         HStack {
                             if isSearching {
@@ -1251,12 +1404,12 @@ struct LocationSettingsView: View {
                             } else {
                                 Image(systemName: "location.fill")
                             }
-                            Text("Use My Location")
+                            Text(L("Use My Location"))
                         }
                     }.disabled(isSearching)
                 }
 
-                SettingsSection(title: "Search City") {
+                SettingsSection(title: L("Search City")) {
                     HStack {
                         TextField("City name", text: $cityInput).textFieldStyle(.roundedBorder)
                             .onSubmit { searchCity() }
@@ -1272,7 +1425,7 @@ struct LocationSettingsView: View {
 
                 // Search Results
                 if showResults && !searchResults.isEmpty {
-                    SettingsSection(title: "Search Results") {
+                    SettingsSection(title: L("Search Results")) {
                         ForEach(searchResults) { result in
                             Button(action: {
                                 let fullName = result.admin.isEmpty ? "\(result.name), \(result.country)" : "\(result.name), \(result.admin), \(result.country)"
@@ -1291,7 +1444,7 @@ struct LocationSettingsView: View {
                     }
                 }
 
-                SettingsSection(title: "Popular Cities") {
+                SettingsSection(title: L("Popular Cities")) {
                     ForEach(popularCities, id: \.0) { city, lat, lon, tz in
                         Button(action: {
                             setLocation(city: city, lat: lat, lon: lon, tz: tz)
@@ -1506,25 +1659,25 @@ struct PrayerTimesSettingsView: View {
             VStack(spacing: 16) {
                 // Current method info
                 if let method = currentMethod {
-                    SettingsSection(title: "Current Method") {
+                    SettingsSection(title: L("Current Method")) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(method.name).font(.system(size: 14, weight: .bold)).foregroundColor(.white)
                             HStack(spacing: 16) {
                                 VStack(alignment: .leading) {
-                                    Text("Fajr angle").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                                    Text(L("Fajr angle")).font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
                                     Text(method.fajr).font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560"))
                                 }
                                 VStack(alignment: .leading) {
-                                    Text("Isha angle").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                                    Text(L("Isha angle")).font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
                                     Text(method.isha).font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560"))
                                 }
                             }
-                            Text("Used in: \(method.usedIn)").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
+                            Text("\(L("Used in: "))\(method.usedIn)").font(.system(size: 11)).foregroundColor(.white.opacity(0.5))
                         }
                     }
                 }
 
-                SettingsSection(title: "Fajr & Isha Method") {
+                SettingsSection(title: L("Fajr & Isha Method")) {
                     Picker("Method", selection: $settingsManager.fajrIshaMethod) {
                         ForEach(calculationMethods, id: \.0) { method in
                             Text(method.name).tag(method.id)
@@ -1537,10 +1690,10 @@ struct PrayerTimesSettingsView: View {
                     }
                 }
 
-                SettingsSection(title: "Asr Method") {
+                SettingsSection(title: L("Asr Method")) {
                     Picker("Method", selection: $settingsManager.asrMethod) {
-                        Text("Standard — Shafi'i, Maliki, Hanbali").tag(AsrMethod.standard)
-                        Text("Hanafi (later time)").tag(AsrMethod.hanbali)
+                        Text(L("Standard — Shafi'i, Maliki, Hanbali")).tag(AsrMethod.standard)
+                        Text(L("Hanafi (later time)")).tag(AsrMethod.hanbali)
                     }
                     .pickerStyle(.menu)
                     .onChange(of: settingsManager.asrMethod) { _ in
@@ -1551,8 +1704,8 @@ struct PrayerTimesSettingsView: View {
 
                 // Info text
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Methods differ in the angle of the sun below the horizon used to calculate Fajr and Isha times.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
-                    Text("Lower angle = earlier Fajr / later Isha.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text(L("Methods differ in the angle of the sun below the horizon used to calculate Fajr and Isha times.")).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text(L("Lower angle = earlier Fajr / later Isha.")).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
                 }
             }.padding()
         }
@@ -1570,7 +1723,7 @@ struct AdjustmentsSettingsView: View {
         ScrollView {
             VStack(spacing: 16) {
                 // Prayer time adjustments
-                SettingsSection(title: "Prayer Time Adjustments (minutes)") {
+                SettingsSection(title: L("Prayer Time Adjustments (minutes)")) {
                     VStack(spacing: 8) {
                         adjustmentRow(prayer: "Fajr", adjustment: $settingsManager.fajrAdjustment)
                         adjustmentRow(prayer: "Sunrise", adjustment: $settingsManager.sunriseAdjustment)
@@ -1582,10 +1735,10 @@ struct AdjustmentsSettingsView: View {
                 }
 
                 // Hijri date adjustment
-                SettingsSection(title: "Hijri Date Adjustment (days)") {
+                SettingsSection(title: L("Hijri Date Adjustment (days)")) {
                     VStack(spacing: 8) {
                         HStack {
-                            Text("Days").font(.system(size: 13)).foregroundColor(.white)
+                            Text(L("Days")).font(.system(size: 13)).foregroundColor(.white)
                             Spacer()
                             Stepper(value: $settingsManager.hijriAdjustment, in: -30...30) {
                                 Text("\(settingsManager.hijriAdjustment) days")
@@ -1593,7 +1746,7 @@ struct AdjustmentsSettingsView: View {
                                     .foregroundColor(settingsManager.hijriAdjustment == 0 ? .white : Color(hex: "E94560"))
                             }
                         }
-                        Text("Positive = later date, Negative = earlier date")
+                        Text(L("Positive = later date, Negative = earlier date"))
                             .font(.system(size: 10))
                             .foregroundColor(.white.opacity(0.4))
                     }
@@ -1603,7 +1756,7 @@ struct AdjustmentsSettingsView: View {
                 Button(action: resetAdjustments) {
                     HStack {
                         Image(systemName: "arrow.counterclockwise")
-                        Text("Reset All Adjustments")
+                        Text(L("Reset All Adjustments"))
                     }
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.7))
@@ -1612,8 +1765,8 @@ struct AdjustmentsSettingsView: View {
 
                 // Info
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Use these adjustments if prayer times seem inaccurate for your location.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
-                    Text("Changes apply immediately.").font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text(L("Use these adjustments if prayer times seem inaccurate for your location.")).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                    Text(L("Changes apply immediately.")).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
                 }
             }.padding()
         }
@@ -1621,7 +1774,7 @@ struct AdjustmentsSettingsView: View {
 
     private func adjustmentRow(prayer: String, adjustment: Binding<Int>) -> some View {
         HStack {
-            Text(prayer).font(.system(size: 13)).foregroundColor(.white)
+            Text(prayerDisplayName(prayer)).font(.system(size: 13)).foregroundColor(.white)
             Spacer()
             Stepper(value: adjustment, in: -60...60) {
                 Text("\(adjustment.wrappedValue) min")
@@ -1666,7 +1819,7 @@ struct AthanSettingsView: View {
                     HStack(spacing: 8) {
                         ProgressView(value: Double(player.prefetchProgress), total: Double(total))
                             .tint(Color(hex: "E94560"))
-                        Text("Caching \(player.prefetchProgress)/\(total)")
+                        Text("\(L("Caching "))\(player.prefetchProgress)/\(total)")
                             .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.5))
                     }
@@ -1683,12 +1836,12 @@ struct AthanSettingsView: View {
                 }
 
                 // Silent mode
-                SettingsSection(title: "Audio") {
-                    Toggle("Silent mode", isOn: $settings.silentMode).tint(Color(hex: "E94560"))
+                SettingsSection(title: L("Audio")) {
+                    Toggle(L("Silent mode"), isOn: $settings.silentMode).tint(Color(hex: "E94560"))
                 }
 
                 // Per-prayer reciter + Play button
-                SettingsSection(title: "Athan Reciter") {
+                SettingsSection(title: L("Athan Reciter")) {
                     VStack(spacing: 10) {
                         ForEach(prayers, id: \.0) { prayerName, reciterKey, enabledKey in
                             reciterRow(prayerName: prayerName, keyPath: reciterKey, enabledKeyPath: enabledKey)
@@ -1697,31 +1850,31 @@ struct AthanSettingsView: View {
                 }
 
                 // Reminders
-                SettingsSection(title: "Reminders") {
+                SettingsSection(title: L("Reminders")) {
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
                             Toggle("", isOn: $settings.reminderBeforeFajr).tint(Color(hex: "E94560")).labelsHidden()
-                            Text("Reminder").foregroundColor(.white).font(.system(size: 13))
+                            Text(L("Reminder")).foregroundColor(.white).font(.system(size: 13))
                             Stepper(value: $settings.reminderFajrMinutes, in: 5...60, step: 5) {
                                 Text("\(settings.reminderFajrMinutes)").font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560")).frame(width: 28, alignment: .trailing)
                             }
-                            Text("minutes before Fajr").foregroundColor(.white).font(.system(size: 13))
+                            Text("minutes before \(prayerDisplayName("Fajr"))").foregroundColor(.white).font(.system(size: 13))
                             Spacer()
                         }
                         HStack(spacing: 8) {
                             Toggle("", isOn: $settings.reminderBeforeSunrise).tint(Color(hex: "E94560")).labelsHidden()
-                            Text("Reminder").foregroundColor(.white).font(.system(size: 13))
+                            Text(L("Reminder")).foregroundColor(.white).font(.system(size: 13))
                             Stepper(value: $settings.reminderSunriseMinutes, in: 5...60, step: 5) {
                                 Text("\(settings.reminderSunriseMinutes)").font(.system(size: 13, weight: .medium)).foregroundColor(Color(hex: "E94560")).frame(width: 28, alignment: .trailing)
                             }
-                            Text("minutes before sunrise").foregroundColor(.white).font(.system(size: 13))
+                            Text("minutes before \(prayerDisplayName("Sunrise"))").foregroundColor(.white).font(.system(size: 13))
                             Spacer()
                         }
                     }
                 }
 
                 // Volume
-                SettingsSection(title: "Volume") {
+                SettingsSection(title: L("Volume")) {
                     HStack {
                         Image(systemName: "speaker.fill").foregroundColor(.white.opacity(0.5)).font(.system(size: 11))
                         Slider(value: $settings.athanVolume, in: 0...1)
@@ -1731,13 +1884,13 @@ struct AthanSettingsView: View {
                 }
 
                 // System notifications link
-                SettingsSection(title: "Notifications") {
+                SettingsSection(title: L("Notifications")) {
                     Button {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!)
                     } label: {
                         HStack {
                             Image(systemName: "bell.badge")
-                            Text("Configure in System Settings")
+                            Text(L("Configure in System Settings"))
                             Spacer()
                             Image(systemName: "arrow.up.right.square").font(.system(size: 11))
                         }
@@ -1747,7 +1900,7 @@ struct AthanSettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                Text("Athan audio streams from cdn.aladhan.com — no internet, no sound.")
+                Text(L("Athan audio streams from cdn.aladhan.com — no internet, no sound."))
                     .font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
             }.padding()
         }
@@ -1773,7 +1926,7 @@ struct AthanSettingsView: View {
                         Circle()
                             .fill(isEnabled ? Color(hex: "E94560") : Color.white.opacity(0.2))
                             .frame(width: 7, height: 7)
-                        Text(prayerName)
+                        Text(prayerDisplayName(prayerName))
                             .font(.system(size: 12, weight: isEnabled ? .semibold : .regular))
                             .foregroundColor(isEnabled ? .white : .white.opacity(0.4))
                     }
@@ -1842,9 +1995,10 @@ struct AthanSettingsView: View {
 // MARK: - About View
 struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = SettingsManager.shared
 
     // ── Update these two lines ──────────────────────────────────────────
-    private let donateURL  = "https://paypal.me/YOUR_LINK_HERE"   // ← your PayPal / Ko-fi
+    private let donateURL  = "https://ko-fi.com/mehdigriche"   // ← your PayPal / Ko-fi
     private let portfolioURL = "https://any.ma/portfolio/mehdigriche/"
     // ────────────────────────────────────────────────────────────────────
 
@@ -1858,7 +2012,7 @@ struct AboutView: View {
                         .scaledToFit()
                         .frame(width: 80, height: 80)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .shadow(color: Color(hex: "E94560").opacity(0.1), radius: 12)
+                        .shadow(color: Color(hex: "E94560").opacity(0.3), radius: 12)
                         .padding(.top, 32)
                 } else {
                     Image(systemName: "moon.stars.fill")
@@ -1871,11 +2025,11 @@ struct AboutView: View {
                     .font(.system(size: 26, weight: .bold))
                     .foregroundColor(.white)
 
-                Text("Prayer Times for macOS")
+                Text(L("Prayer Times for macOS"))
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.5))
 
-                Text("Version 1.0")
+                Text(L("Version 1.0"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.bottom, 8)
@@ -1885,7 +2039,7 @@ struct AboutView: View {
 
             // Developer card
             VStack(spacing: 12) {
-                Text("Made with ♥ by")
+                Text(L("Made with ♥ by"))
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
 
@@ -1905,7 +2059,7 @@ struct AboutView: View {
                             Text("Mehdi Griche")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text("Mobile Developer")
+                            Text(L("Mobile Developer"))
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.5))
                         }
@@ -1926,7 +2080,7 @@ struct AboutView: View {
 
             // Description
             VStack(spacing: 8) {
-                Text("Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS.")
+                Text(L("Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS."))
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.45))
                     .multilineTextAlignment(.center)
@@ -1942,7 +2096,7 @@ struct AboutView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "cup.and.saucer.fill")
                         .font(.system(size: 13))
-                    Text("Buy Me a Coffee — Ko-fi")
+                    Text(L("Buy Me a Coffee — Ko-fi"))
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -1957,14 +2111,14 @@ struct AboutView: View {
             .padding(.horizontal, 24)
 
             // Prayer times API credit
-            Text("Prayer times powered by AlAdhan API")
+            Text(L("Prayer times powered by AlAdhan API"))
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.25))
                 .padding(.top, 12)
                 .padding(.bottom, 6)
 
             // Done
-            Button("Done") { dismiss() }
+            Button(L("Done")) { dismiss() }
                 .foregroundColor(Color(hex: "E94560"))
                 .font(.system(size: 13))
                 .padding(.bottom, 20)
