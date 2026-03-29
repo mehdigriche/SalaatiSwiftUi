@@ -4,6 +4,7 @@ import UserNotifications
 import ServiceManagement
 import AVFoundation
 import UniformTypeIdentifiers
+import StoreKit          // ← add this line
 
 // MARK: - App Entry Point
 @main
@@ -1998,7 +1999,6 @@ struct AboutView: View {
     @ObservedObject private var settings = SettingsManager.shared
 
     // ── Update these two lines ──────────────────────────────────────────
-    private let donateURL  = "https://ko-fi.com/mehdigriche"   // ← your PayPal / Ko-fi
     private let portfolioURL = "https://any.ma/portfolio/mehdigriche/"
     // ────────────────────────────────────────────────────────────────────
 
@@ -2089,26 +2089,9 @@ struct AboutView: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
 
-            // Donate button
-            Button {
-                NSWorkspace.shared.open(URL(string: donateURL)!)
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "cup.and.saucer.fill")
-                        .font(.system(size: 13))
-                    Text(L("Buy Me a Coffee — Ko-fi"))
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(hex: "E94560"))
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 24)
+            // Tip Jar
+            TipJarView()
+                .padding(.horizontal, 24)
 
             // Prayer times API credit
             Text(L("Prayer times powered by AlAdhan API"))
@@ -2130,6 +2113,113 @@ struct AboutView: View {
                 AppBackground()
             }
         )
+    }
+}
+
+// MARK: - Tip Jar View
+struct TipJarView: View {
+    @StateObject private var tipJar = TipJarManager.shared
+    @State private var showThankYou = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if tipJar.isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "E94560")))
+                    .scaleEffect(0.8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+
+            } else if showThankYou {
+                HStack(spacing: 8) {
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(Color(hex: "E94560"))
+                    Text("Jazakum Allahu Khayran 🤍")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.07)))
+
+            } else if tipJar.products.isEmpty {
+                // Products not loaded yet — tap to load
+                Button {
+                    tipJar.fetchProducts()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "cup.and.saucer.fill")
+                        Text("Support Development")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "E94560")))
+                }
+                .buttonStyle(.plain)
+
+            } else {
+                // Show tip options
+                Text("Support Development")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.5))
+
+                HStack(spacing: 8) {
+                    ForEach(tipJar.products, id: \.productIdentifier) { product in
+                        Button {
+                            tipJar.purchase(product)
+                        } label: {
+                            VStack(spacing: 3) {
+                                Text(tipEmoji(product.productIdentifier))
+                                    .font(.system(size: 18))
+                                Text(product.localizedPrice)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(hex: "E94560").opacity(0.15))
+                                    .overlay(RoundedRectangle(cornerRadius: 10)
+                                        .strokeBorder(Color(hex: "E94560").opacity(0.4), lineWidth: 1))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(tipJar.isPurchasing)
+                    }
+                }
+
+                if tipJar.isPurchasing {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "E94560")))
+                        .scaleEffect(0.7)
+                }
+            }
+        }
+        .onAppear { tipJar.fetchProducts() }
+        .onChange(of: tipJar.purchaseState) { state in
+            if case .success = state {
+                withAnimation { showThankYou = true }
+            }
+        }
+    }
+
+    private func tipEmoji(_ productID: String) -> String {
+        if productID.contains("small")  { return "☕️" }
+        if productID.contains("medium") { return "🧆" }
+        if productID.contains("large")  { return "🎁" }
+        return "🤍"
+    }
+}
+
+extension SKProduct {
+    var localizedPrice: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = priceLocale
+        return formatter.string(from: price) ?? "\(price)"
     }
 }
 
@@ -2391,6 +2481,86 @@ class AthanPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
             self.isPlaying = false
             self.currentlyPlayingReciter = nil
             self.currentlyPlayingPrayerName = nil
+        }
+    }
+}
+
+// MARK: - Tip Jar Manager
+@MainActor
+class TipJarManager: NSObject, ObservableObject, SKProductsRequestDelegate, SKPaymentTransactionObserver {
+    static let shared = TipJarManager()
+
+    static let productIDs: Set<String> = [
+        "com.mehdigriche.salaati.tip.small",
+        "com.mehdigriche.salaati.tip.medium",
+        "com.mehdigriche.salaati.tip.large"
+    ]
+
+    @Published var products: [SKProduct] = []
+    @Published var isLoading = false
+    @Published var isPurchasing = false
+    @Published var purchaseState: PurchaseState = .idle
+
+    enum PurchaseState: Equatable {
+        case idle, success, restored
+        case failed(String)
+    }
+
+    private override init() {
+        super.init()
+        SKPaymentQueue.default().add(self)
+    }
+
+    func fetchProducts() {
+        guard products.isEmpty else { return }
+        isLoading = true
+        let request = SKProductsRequest(productIdentifiers: Self.productIDs)
+        request.delegate = self
+        request.start()
+    }
+
+    nonisolated func productsRequest(_ request: SKProductsRequest, didReceive response: SKProductsResponse) {
+        Task { @MainActor in
+            self.products = response.products.sorted {
+                ($0.price as Decimal) < ($1.price as Decimal)
+            }
+            self.isLoading = false
+        }
+    }
+
+    nonisolated func request(_ request: SKRequest, didFailWithError error: Error) {
+        Task { @MainActor in
+            self.isLoading = false
+        }
+    }
+
+    func purchase(_ product: SKProduct) {
+        guard SKPaymentQueue.canMakePayments() else { return }
+        isPurchasing = true
+        SKPaymentQueue.default().add(SKPayment(product: product))
+    }
+
+    nonisolated func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
+        for transaction in transactions {
+            Task { @MainActor in
+                switch transaction.transactionState {
+                case .purchased:
+                    SKPaymentQueue.default().finishTransaction(transaction)
+                    self.isPurchasing = false
+                    self.purchaseState = .success
+                case .restored:
+                    SKPaymentQueue.default().finishTransaction(transaction)
+                    self.isPurchasing = false
+                    self.purchaseState = .restored
+                case .failed:
+                    SKPaymentQueue.default().finishTransaction(transaction)
+                    self.isPurchasing = false
+                    if (transaction.error as? SKError)?.code != .paymentCancelled {
+                        self.purchaseState = .failed(transaction.error?.localizedDescription ?? "Purchase failed")
+                    }
+                default: break
+                }
+            }
         }
     }
 }

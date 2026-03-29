@@ -9,14 +9,27 @@
 /* Begin PBXBuildFile section */
 		503D8FACD5081D8CD2D83251 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FFDAB196235A3B6DCE2A8A /* ContentView.swift */; };
 		A3950CF92F6A1A1B00949480 /* Assets.xcassets in Sources */ = {isa = PBXBuildFile; fileRef = A3950CF82F69ECC300949480 /* Assets.xcassets */; };
+		A3F60FC02F79F08E006ACF2F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A3F60FBF2F79F08E006ACF2F /* StoreKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		3BBDCAE21950617A8C7462CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		78FFDAB196235A3B6DCE2A8A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A3950CF82F69ECC300949480 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A3F60FBF2F79F08E006ACF2F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		C8191153A8676D202B618C45 /* SalaatiSwiftUi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SalaatiSwiftUi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A3F60FC12F79F08E006ACF2F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3F60FC02F79F08E006ACF2F /* StoreKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		0F3BCE6AC99F1BA3B1958D2D /* Products */ = {
@@ -41,8 +54,17 @@
 			isa = PBXGroup;
 			children = (
 				16542C222780ACEE6A31F9DE /* SalaatiSwiftUi */,
+				A3F60FBE2F79F08E006ACF2F /* Frameworks */,
 				0F3BCE6AC99F1BA3B1958D2D /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		A3F60FBE2F79F08E006ACF2F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A3F60FBF2F79F08E006ACF2F /* StoreKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -53,6 +75,7 @@
 			buildConfigurationList = 67E2402A522E25959188C4CD /* Build configuration list for PBXNativeTarget "SalaatiSwiftUi" */;
 			buildPhases = (
 				F1A0F4C00AD814AEE3F2A1B2 /* Sources */,
+				A3F60FC12F79F08E006ACF2F /* Frameworks */,
 			);
 			buildRules = (
 			);
