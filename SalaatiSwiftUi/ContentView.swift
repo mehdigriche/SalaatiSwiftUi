@@ -49,6 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: 380, height: 550)
         popover.behavior = .transient
         popover.animates = true
+        popover.appearance = NSAppearance(named: .darkAqua)  // ← add this
         popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager, appDelegate: self))
     }
 
@@ -373,7 +374,7 @@ class SettingsManager: ObservableObject {
         prayerTimeDisplay = PrayerTimeDisplay(rawValue: UserDefaults.standard.integer(forKey: "prayerTimeDisplay")) ?? .countdown
         showIcon = UserDefaults.standard.object(forKey: "showIcon") as? Bool ?? true
         arabicMode = UserDefaults.standard.object(forKey: "arabicMode") as? Bool ?? true
-        startAtLogin = UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? false
+        startAtLogin = UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? true
         showBackground = UserDefaults.standard.object(forKey: "showBackground") as? Bool ?? true
         backgroundOpacity = UserDefaults.standard.object(forKey: "backgroundOpacity") as? Double ?? 0.25
         asrMethod = AsrMethod(rawValue: UserDefaults.standard.integer(forKey: "asrMethod")) ?? .standard
@@ -498,6 +499,10 @@ func L(_ english: String) -> String {
     case "Refresh":             return "تحديث"
     case "About":               return "عن التطبيق"
     case "Quit":                return "خروج"
+    case "Qibla":               return "القبلة"
+    case "from North":          return "من الشمال"
+    case "Duaa":                return "الدعاء"
+    case "Shuffle":             return "خلط"
     // General settings
     case "Menu Bar Display":    return "شريط القائمة"
     case "Show Next Prayer":    return "عرض الصلاة القادمة"
@@ -576,7 +581,7 @@ func L(_ english: String) -> String {
     // About
     case "Mobile Developer":    return "مطور تطبيقات"
     case "Prayer Times for macOS": return "أوقات الصلاة لـ macOS"
-    case "Version 1.0":         return "الإصدار 1.0"
+    case "Version 1.1":         return "الإصدار 1.1"
     case "Made with ♥ by":      return "صُنع بـ ♥ من قِبل"
     case "Buy Me a Coffee — Ko-fi": return "ادعمني على Ko-fi ☕"
     case "Prayer times powered by AlAdhan API": return "أوقات الصلاة من AlAdhan API"
@@ -764,12 +769,12 @@ class PrayerTimesManager: ObservableObject {
     func timeRemaining() -> String {
         let now = Date()
         if let nextPrayer = prayers.first(where: { $0.time > now && $0.isEnabled }) {
-            let components = Calendar.current.dateComponents([.hour, .minute, .second], from: now, to: nextPrayer.time)
-            if let hours = components.hour, let minutes = components.minute, let seconds = components.second {
-                return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+            let components = Calendar.current.dateComponents([.hour, .minute], from: now, to: nextPrayer.time)
+            if let hours = components.hour, let minutes = components.minute {
+                return String(format: "%02d:%02d", hours, minutes)
             }
         }
-        return "00:00:00"
+        return "00:00"
     }
 
     func save() {
@@ -787,6 +792,337 @@ class PrayerTimesManager: ObservableObject {
         if let tz = tz { timezone = tz }
         save()
         Task { await fetchPrayerTimes() }
+    }
+}
+
+// MARK: - Qibla Manager
+@MainActor
+class QiblaManager: ObservableObject {
+    static let shared = QiblaManager()
+    @Published var direction: Double? = nil  // degrees from North
+    @Published var isLoading = false
+    @Published var error: String? = nil
+
+    func fetch(latitude: Double, longitude: Double) async {
+        isLoading = true
+        error = nil
+        let urlString = "https://api.aladhan.com/v1/qibla/\(latitude)/\(longitude)"
+        guard let url = URL(string: urlString) else { isLoading = false; return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let dataObj = json["data"] as? [String: Any],
+               let dir = dataObj["direction"] as? Double {
+                direction = dir
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - Qibla View
+struct QiblaView: View {
+    @ObservedObject var manager: PrayerTimesManager
+    @StateObject private var qibla = QiblaManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+
+                if qibla.isLoading {
+                    ProgressView().progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "E94560")))
+                        .padding(.top, 40)
+
+                } else if let direction = qibla.direction {
+                    // Compass rose
+                    ZStack {
+                        // Outer ring
+                        Circle()
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1.5)
+                            .frame(width: 220, height: 220)
+
+                        // Cardinal directions
+                        ForEach([(0.0, "N"), (90.0, "E"), (180.0, "S"), (270.0, "W")], id: \.1) { angle, label in
+                            Text(label)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white.opacity(0.4))
+                                .offset(y: -95)
+                                .rotationEffect(.degrees(angle))
+                        }
+
+                        // Degree ticks
+                        ForEach(0..<36) { i in
+                            Rectangle()
+                                .fill(Color.white.opacity(i % 9 == 0 ? 0.3 : 0.1))
+                                .frame(width: 1, height: i % 9 == 0 ? 10 : 5)
+                                .offset(y: -105)
+                                .rotationEffect(.degrees(Double(i) * 10))
+                        }
+
+                        // Qibla arrow
+                        VStack(spacing: 0) {
+                            // Arrowhead
+                            Triangle()
+                                .fill(Color(hex: "E94560"))
+                                .frame(width: 14, height: 18)
+                            // Shaft
+                            Rectangle()
+                                .fill(Color(hex: "E94560"))
+                                .frame(width: 3, height: 60)
+                            // Kaaba icon at tip
+                            Image(systemName: "cube.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(Color(hex: "E94560"))
+                                .padding(.top, 4)
+                        }
+                        .rotationEffect(.degrees(direction))
+                        .animation(.easeInOut(duration: 0.8), value: direction)
+
+                        // Center dot
+                        Circle()
+                            .fill(Color.white.opacity(0.6))
+                            .frame(width: 8, height: 8)
+                    }
+                    .padding(.top, 16)
+
+                    // Direction info
+                    VStack(spacing: 6) {
+                        Text(String(format: "%.1f°", direction))
+                            .font(.system(size: 36, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text("from North")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+
+                    // Instructions
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "iphone")
+                                .foregroundColor(Color(hex: "E94560"))
+                                .font(.system(size: 14))
+                            Text("Use your iPhone compass to face \(String(format: "%.0f°", direction)) from North")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.5))
+                                .multilineTextAlignment(.leading)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+
+                        Text("Based on \(manager.locationName)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                    .padding(.horizontal, 4)
+
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "location.slash")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white.opacity(0.3))
+                            .padding(.top, 40)
+                        Text("Set your location first")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                }
+            }
+            .padding()
+        }
+        .task {
+            await qibla.fetch(latitude: manager.latitude, longitude: manager.longitude)
+        }
+    }
+}
+
+struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Duaa
+struct Duaa: Identifiable {
+    let id = UUID()
+    let arabic: String
+    let transliteration: String
+    let translation: String
+    let occasion: String
+}
+
+let allDuaa: [Duaa] = [
+    Duaa(arabic: "اللَّهُمَّ إِنِّي أَسْأَلُكَ عِلْمًا نَافِعًا، وَرِزْقًا طَيِّبًا، وَعَمَلًا مُتَقَبَّلًا",
+         transliteration: "Allahumma inni as'aluka 'ilman nafi'an, wa rizqan tayyiban, wa 'amalan mutaqabbalan",
+         translation: "O Allah, I ask You for beneficial knowledge, pure provision, and accepted deeds.",
+         occasion: "Morning"),
+    Duaa(arabic: "رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي",
+         transliteration: "Rabbi ishrah li sadri wa yassir li amri",
+         translation: "My Lord, expand my chest and ease my task for me.",
+         occasion: "Before work"),
+    Duaa(arabic: "اللَّهُمَّ بِكَ أَصْبَحْنَا وَبِكَ أَمْسَيْنَا، وَبِكَ نَحْيَا وَبِكَ نَمُوتُ وَإِلَيْكَ النُّشُورُ",
+         transliteration: "Allahumma bika asbahna wa bika amsayna, wa bika nahya wa bika namutu wa ilayka al-nushur",
+         translation: "O Allah, by You we enter the morning and by You we enter the evening, by You we live and by You we die, and to You is the resurrection.",
+         occasion: "Morning"),
+    Duaa(arabic: "اللَّهُمَّ أَعِنِّي عَلَى ذِكْرِكَ وَشُكْرِكَ وَحُسْنِ عِبَادَتِكَ",
+         transliteration: "Allahumma a'inni 'ala dhikrika wa shukrika wa husni 'ibadatika",
+         translation: "O Allah, help me to remember You, to be grateful to You, and to worship You in an excellent manner.",
+         occasion: "After prayer"),
+    Duaa(arabic: "حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ",
+         transliteration: "Hasbunallahu wa ni'mal wakil",
+         translation: "Allah is sufficient for us, and He is the best disposer of affairs.",
+         occasion: "Hardship"),
+    Duaa(arabic: "رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً وَفِي الآخِرَةِ حَسَنَةً وَقِنَا عَذَابَ النَّارِ",
+         transliteration: "Rabbana atina fid-dunya hasanatan wa fil-akhirati hasanatan wa qina 'adhab an-nar",
+         translation: "Our Lord, give us good in this world and good in the hereafter and save us from the punishment of the Fire.",
+         occasion: "General"),
+    Duaa(arabic: "اللَّهُمَّ إِنِّي أَعُوذُ بِكَ مِنَ الْهَمِّ وَالْحَزَنِ",
+         transliteration: "Allahumma inni a'udhu bika minal-hammi wal-hazan",
+         translation: "O Allah, I seek refuge in You from worry and grief.",
+         occasion: "Anxiety"),
+    Duaa(arabic: "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ سُبْحَانَ اللَّهِ الْعَظِيمِ",
+         transliteration: "Subhanallahi wa bihamdihi, subhanallahil 'adhim",
+         translation: "Glory be to Allah and His is the praise, glory be to Allah the Magnificent.",
+         occasion: "Dhikr"),
+    Duaa(arabic: "اللَّهُمَّ اغْفِرْ لِي وَلِوَالِدَيَّ وَلِلْمُؤْمِنِينَ يَوْمَ يَقُومُ الْحِسَابُ",
+         transliteration: "Allahummaghfir li wa liwalidayya wa lil mu'minin yawma yaqumul hisab",
+         translation: "O Allah, forgive me, my parents, and the believers on the Day of Reckoning.",
+         occasion: "For parents"),
+    Duaa(arabic: "اللَّهُمَّ أَنْتَ السَّلَامُ وَمِنْكَ السَّلَامُ تَبَارَكْتَ يَا ذَا الْجَلَالِ وَالْإِكْرَامِ",
+         transliteration: "Allahumma antas-salam wa minkas-salam tabarakta ya dhal-jalali wal-ikram",
+         translation: "O Allah, You are Peace and from You is peace. Blessed are You, O possessor of glory and honour.",
+         occasion: "After prayer"),
+    Duaa(arabic: "رَبِّ زِدْنِي عِلْمًا",
+         transliteration: "Rabbi zidni 'ilma",
+         translation: "My Lord, increase me in knowledge.",
+         occasion: "Seeking knowledge"),
+    Duaa(arabic: "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَافِيَةَ فِي الدُّنْيَا وَالآخِرَةِ",
+         transliteration: "Allahumma inni as'alukal-'afiyata fid-dunya wal-akhirah",
+         translation: "O Allah, I ask You for well-being in this world and the hereafter.",
+         occasion: "General"),
+]
+
+// MARK: - Duaa View (shown in popover)
+struct DuaaCardView: View {
+    @State private var currentIndex = Int.random(in: 0..<allDuaa.count)
+    @ObservedObject private var settings = SettingsManager.shared
+
+    private var duaa: Duaa { allDuaa[currentIndex] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "hands.sparkles")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(hex: "E94560"))
+                Text(settings.arabicMode ? "دعاء" : "Duaa · \(duaa.occasion)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Color(hex: "E94560"))
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        currentIndex = (currentIndex + 1) % allDuaa.count
+                    }
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .help("Show another duaa")
+            }
+
+            Text(duaa.arabic)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .lineSpacing(4)
+
+            if !settings.arabicMode {
+                Text(duaa.transliteration)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.4))
+                    .italic()
+
+                Text(duaa.translation)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineSpacing(2)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(hex: "E94560").opacity(0.15), lineWidth: 1)))
+    }
+}
+
+// MARK: - Full Duaa List View (in settings)
+struct DuaaListView: View {
+    @ObservedObject private var settings = SettingsManager.shared
+    @State private var shuffled = allDuaa.shuffled()
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                HStack {
+                    Text(settings.arabicMode ? "أدعية يومية" : "\(allDuaa.count) daily supplications")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.4))
+                    Spacer()
+                    Button {
+                        withAnimation { shuffled = allDuaa.shuffled() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "shuffle")
+                            Text(settings.arabicMode ? "خلط" : "Shuffle")
+                        }
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "E94560"))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 4)
+
+                ForEach(shuffled) { duaa in
+                    VStack(alignment: .trailing, spacing: 8) {
+                        HStack {
+                            Text(duaa.occasion)
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.3))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.white.opacity(0.05)))
+                            Spacer()
+                        }
+                        Text(duaa.arabic)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .lineSpacing(4)
+                        if !settings.arabicMode {
+                            Text(duaa.translation)
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.5))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04)))
+                }
+            }
+            .padding()
+        }
     }
 }
 
@@ -951,7 +1287,7 @@ struct MenuBarPopoverView: View {
 
             footerView
         }
-        .frame(width: 380, height: 550)
+        .frame(width: 380, height: 750)
         .background(AppBackground())
         .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
             appDelegate?.refreshMenuBar()
@@ -960,6 +1296,7 @@ struct MenuBarPopoverView: View {
             // Force view refresh when prayer times change
             appDelegate?.refreshMenuBar()
         }
+        .preferredColorScheme(.dark)
     }
 
     private var headerView: some View {
@@ -1131,6 +1468,11 @@ struct MenuBarPopoverView: View {
                     )
                 }
             }.padding(.horizontal, 12)
+            
+            // Duaa card at bottom of list
+            DuaaCardView()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
         }
     }
 
@@ -1227,6 +1569,8 @@ struct SettingsView: View {
                 Text(L("Prayer")).tag(2)
                 Text(L("Adjust")).tag(3)
                 Text(L("Athan")).tag(4)
+                Text(L("Qibla")).tag(5)
+                Text(L("Duaa")).tag(6)
             }.pickerStyle(.segmented).padding()
 
             TabView(selection: $selectedTab) {
@@ -1235,6 +1579,8 @@ struct SettingsView: View {
                 PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate).tag(2)
                 AdjustmentsSettingsView(manager: manager).tag(3)
                 AthanSettingsView().tag(4)
+                QiblaView(manager: manager).tag(5)
+                DuaaListView().tag(6)
             }.tabViewStyle(.automatic)
 
             HStack { Spacer(); Button(L("Done")) { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
@@ -1244,6 +1590,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
             // Force refresh when location/prayer times change
         }
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -2029,7 +2376,7 @@ struct AboutView: View {
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.5))
 
-                Text(L("Version 1.0"))
+                Text(L("Version 1.1"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.bottom, 8)
@@ -2113,6 +2460,7 @@ struct AboutView: View {
                 AppBackground()
             }
         )
+        .preferredColorScheme(.dark)
     }
 }
 
