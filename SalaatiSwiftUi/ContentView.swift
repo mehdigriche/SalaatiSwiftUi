@@ -581,7 +581,7 @@ func L(_ english: String) -> String {
     // About
     case "Mobile Developer":    return "مطور تطبيقات"
     case "Prayer Times for macOS": return "أوقات الصلاة لـ macOS"
-    case "Version 1.1":         return "الإصدار 1.1"
+    case "Version 1.1.0":         return "الإصدار 1.1.0"
     case "Made with ♥ by":      return "صُنع بـ ♥ من قِبل"
     case "Buy Me a Coffee — Ko-fi": return "ادعمني على Ko-fi ☕"
     case "Prayer times powered by AlAdhan API": return "أوقات الصلاة من AlAdhan API"
@@ -2376,7 +2376,7 @@ struct AboutView: View {
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.5))
 
-                Text(L("Version 1.1"))
+                Text(L("Version 1.1.0"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.bottom, 8)
