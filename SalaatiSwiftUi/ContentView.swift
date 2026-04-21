@@ -22,13 +22,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover!
     var timer: Timer?
     var prayerManager = PrayerTimesManager()
+    private var lastMenuBarText = ""
+    private var lastFlashTick = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
         startTimer()
         NotificationManager.shared.requestPermission()
-        AthanPlayer.shared.prefetchAll()
+
+        // Listen for Mac sleep/wake
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+    }
+
+    @objc private func systemWillSleep() {
+        // Stop athan immediately when Mac sleeps
+        Task { @MainActor in
+            AthanPlayer.shared.stop()
+        }
+    }
+
+    @objc private func systemDidWake() {
+        Task { @MainActor in
+            // Stop any leftover athan state
+            AthanPlayer.shared.stop()
+            // Check if day changed while sleeping — if so, refetch
+            let calendar = Calendar.current
+            let savedDay = UserDefaults.standard.object(forKey: "lastFetchedDay") as? Int ?? -1
+            let today = calendar.component(.day, from: Date())
+            if savedDay != today {
+                await prayerManager.fetchPrayerTimes()
+                UserDefaults.standard.set(today, forKey: "lastFetchedDay")
+            } else {
+                prayerManager.updateCurrentPrayer()
+            }
+            refreshMenuBar()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -54,13 +94,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshMenuBar()
-                self?.prayerManager.updateCurrentPrayer()
-                self?.checkAndPlayAthan()
+                guard let self else { return }
+                self.prayerManager.updateCurrentPrayer()
+                self.checkAndPlayAthan()
+                let newText = self.buildMenuBarText()
+                let athanPlaying = AthanPlayer.shared.isPlaying
+                if newText != self.lastMenuBarText || athanPlaying != self.lastFlashTick {
+                    self.lastMenuBarText = newText
+                    self.lastFlashTick = athanPlaying
+                    self.refreshMenuBar()
+                }
             }
         }
+        t.tolerance = 0.1  // allows OS to coalesce with other timers, saves battery
+        RunLoop.main.add(t, forMode: .common)  // fires even during menu/scroll tracking
+        timer = t
+    }
+
+    private func buildMenuBarText() -> String {
+        let settings = SettingsManager.shared
+        guard settings.showNextPrayer else { return "" }
+        let prayer = AthanPlayer.shared.isPlaying
+            ? prayerManager.prayers.first(where: { $0.name == AthanPlayer.shared.currentlyPlayingPrayerName })
+            : prayerManager.getNextPrayer()
+        guard let p = prayer else { return "" }
+        var text = ""
+        if settings.prayerNameDisplay == .full { text = p.localizedName }
+        else if settings.prayerNameDisplay == .abbreviation { text = String(p.localizedName.prefix(3)) }
+        if !AthanPlayer.shared.isPlaying {
+            if settings.prayerTimeDisplay == .countdown { text += " \(prayerManager.timeRemaining())" }
+            else if settings.prayerTimeDisplay == .time { text += " \(formatTime(p.time))" }
+        }
+        return text
     }
 
     // Tracks "PrayerName-yyyy-MM-dd" to avoid replaying on the same day
@@ -581,7 +648,7 @@ func L(_ english: String) -> String {
     // About
     case "Mobile Developer":    return "مطور تطبيقات"
     case "Prayer Times for macOS": return "أوقات الصلاة لـ macOS"
-    case "Version 1.1.0":         return "الإصدار 1.1.0"
+    case "Version 1.2.0":         return "الإصدار 1.2.0"
     case "Made with ♥ by":      return "صُنع بـ ♥ من قِبل"
     case "Buy Me a Coffee — Ko-fi": return "ادعمني على Ko-fi ☕"
     case "Prayer times powered by AlAdhan API": return "أوقات الصلاة من AlAdhan API"
@@ -684,6 +751,7 @@ class PrayerTimesManager: ObservableObject {
 
         guard let url = URL(string: urlString) else {
             prayers = getDefaultPrayers()
+            UserDefaults.standard.set(Calendar.current.component(.day, from: Date()), forKey: "lastFetchedDay")
             isLoading = false
             return
         }
@@ -2376,7 +2444,7 @@ struct AboutView: View {
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.5))
 
-                Text(L("Version 1.1.0"))
+                Text(L("Version 1.2.0"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.bottom, 8)
