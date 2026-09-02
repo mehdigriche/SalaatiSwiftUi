@@ -86,11 +86,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 550)
+        popover.contentSize = NSSize(width: 380, height: 750)
         popover.behavior = .transient
         popover.animates = true
-        popover.appearance = NSAppearance(named: .darkAqua)  // ← add this
+        popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: MenuBarPopoverView(manager: prayerManager, appDelegate: self))
+
+        // Reset the popover back to the prayer list whenever it goes away, so the
+        // next click on the menu bar item never reopens a stale Settings screen.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(popoverDidClose),
+            name: NSPopover.didCloseNotification,
+            object: popover
+        )
+        // Switching to any other app dismisses the popover as well.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
     }
 
     private func startTimer() {
@@ -99,6 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.prayerManager.updateCurrentPrayer()
                 self.checkAndPlayAthan()
+                self.checkQuranReminder()
                 let newText = self.buildMenuBarText()
                 let athanPlaying = AthanPlayer.shared.isPlaying
                 if newText != self.lastMenuBarText || athanPlaying != self.lastFlashTick {
@@ -254,15 +271,147 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarTimeFormatter.string(from: date)
     }
 
+    // MARK: Popover presentation
+
+    /// Monitors that close the popover when the user clicks anywhere outside of it.
+    /// `.transient` alone is not enough here: the popover window is made key so text
+    /// fields work, which downgrades it to semi-transient behaviour on macOS.
+    private var globalClickMonitor: Any?
+    private var localClickMonitor: Any?
+    private var suppressOutsideDismiss = false
+
     @objc func togglePopover() {
-        guard let button = statusItem.button else { return }
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
+            showPopover(route: .home)
+        }
+    }
+
+    func showPopover(route: PopoverRoute = .home, activateApp: Bool = false) {
+        guard let button = statusItem.button else { return }
+        PopoverRouter.shared.route = route
+        if activateApp {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if !popover.isShown {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+        startOutsideClickMonitor()
     }
+
+    func closePopover() {
+        stopOutsideClickMonitor()
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+    }
+
+    private func startOutsideClickMonitor() {
+        stopOutsideClickMonitor()
+
+        // Clicks landing in another app, or on the desktop — our windows never see these.
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.suppressOutsideDismiss else { return }
+                self.closePopover()
+            }
+        }
+
+        // Clicks inside our own process but outside the popover window.
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self, self.popover.isShown, !self.suppressOutsideDismiss else { return event }
+            let popoverWindow = self.popover.contentViewController?.view.window
+            // The status item handles its own clicks in togglePopover().
+            guard event.window !== popoverWindow,
+                  event.window !== self.statusItem.button?.window else { return event }
+            Task { @MainActor in
+                guard !self.suppressOutsideDismiss else { return }
+                self.closePopover()
+            }
+            return event
+        }
+    }
+
+    private func stopOutsideClickMonitor() {
+        if let globalClickMonitor { NSEvent.removeMonitor(globalClickMonitor) }
+        if let localClickMonitor { NSEvent.removeMonitor(localClickMonitor) }
+        globalClickMonitor = nil
+        localClickMonitor = nil
+    }
+
+    @objc private func popoverDidClose() {
+        stopOutsideClickMonitor()
+        PopoverRouter.shared.route = .home
+    }
+
+    @objc private func appDidResignActive() {
+        guard !suppressOutsideDismiss else { return }
+        closePopover()
+    }
+
+    /// Runs an app-modal panel (the background image picker) without the popover
+    /// dismissing itself out from under it.
+    func withModalPanel<T>(_ body: () -> T) -> T {
+        let previousBehavior = popover.behavior
+        popover.behavior = .applicationDefined
+        suppressOutsideDismiss = true
+        stopOutsideClickMonitor()
+        defer {
+            suppressOutsideDismiss = false
+            popover.behavior = previousBehavior
+            if popover.isShown { startOutsideClickMonitor() }
+        }
+        return body()
+    }
+
+    // MARK: Quran daily reminder
+
+    private func checkQuranReminder() {
+        let settings = SettingsManager.shared
+        guard settings.quranReminderEnabled else { return }
+
+        let quran = QuranManager.shared
+        // Nothing to nudge about once the whole mushaf is done, or once today's page is read.
+        guard !quran.isFinished, !quran.hasReadToday else { return }
+
+        let now = Date()
+        let calendar = Calendar.current
+        let comps = calendar.dateComponents([.hour, .minute, .second], from: now)
+        guard comps.hour == settings.quranReminderHour,
+              comps.minute == settings.quranReminderMinute,
+              let second = comps.second, second < 3 else { return }
+
+        // Fire at most once per calendar day.
+        let dayKey = String(Int(calendar.startOfDay(for: now).timeIntervalSince1970))
+        guard UserDefaults.standard.string(forKey: "quranPromptDay") != dayKey else { return }
+        UserDefaults.standard.set(dayKey, forKey: "quranPromptDay")
+
+        NotificationManager.shared.sendQuranReminder(page: quran.currentPage ?? 1)
+        showPopover(route: .quran, activateApp: true)
+    }
+}
+
+// MARK: - Popover Routing
+
+/// Which screen the popover is showing. Settings and About used to be SwiftUI
+/// sheets, which attach a *window-modal* sheet to the popover's window — that
+/// modal session swallows outside clicks, so the popover could never be
+/// dismissed and the app looked frozen. They are plain in-popover screens now.
+enum PopoverRoute { case home, settings, about, quran }
+
+@MainActor
+final class PopoverRouter: ObservableObject {
+    static let shared = PopoverRouter()
+    @Published var route: PopoverRoute = .home
+    private init() {}
+
+    func goHome() { route = .home }
 }
 
 // MARK: - Settings Manager
@@ -430,6 +579,24 @@ class SettingsManager: ObservableObject {
         }
     }
 
+    // MARK: Quran Reading
+    @Published var quranReminderEnabled: Bool {
+        didSet { UserDefaults.standard.set(quranReminderEnabled, forKey: "quranReminderEnabled") }
+    }
+    @Published var quranReminderHour: Int {
+        didSet { UserDefaults.standard.set(quranReminderHour, forKey: "quranReminderHour") }
+    }
+    @Published var quranReminderMinute: Int {
+        didSet { UserDefaults.standard.set(quranReminderMinute, forKey: "quranReminderMinute") }
+    }
+    @Published var quranTranslation: QuranTranslation {
+        didSet {
+            UserDefaults.standard.set(quranTranslation.rawValue, forKey: "quranTranslation")
+            guard quranTranslation != oldValue else { return }
+            Task { @MainActor in await QuranManager.shared.loadCurrentPage(force: true) }
+        }
+    }
+
     // Adjustments are applied locally — no network call needed
     private func refreshPrayerTimesIfNeeded() {
         NotificationCenter.default.post(name: .applyAdjustments, object: nil)
@@ -474,6 +641,12 @@ class SettingsManager: ObservableObject {
         reminderSunriseMinutes = UserDefaults.standard.object(forKey: "reminderSunriseMinutes") as? Int ?? 30
         playDuaAfterAdhan = UserDefaults.standard.object(forKey: "playDuaAfterAdhan") as? Bool ?? false
         athanVolume = UserDefaults.standard.object(forKey: "athanVolume") as? Double ?? 0.8
+
+        // Quran reading — remind once a day, 20:00 by default
+        quranReminderEnabled = UserDefaults.standard.object(forKey: "quranReminderEnabled") as? Bool ?? true
+        quranReminderHour    = UserDefaults.standard.object(forKey: "quranReminderHour")   as? Int ?? 20
+        quranReminderMinute  = UserDefaults.standard.object(forKey: "quranReminderMinute") as? Int ?? 0
+        quranTranslation = QuranTranslation(rawValue: UserDefaults.standard.string(forKey: "quranTranslation") ?? "") ?? .english
     }
 
     func athanEnabled(for prayerName: String) -> Bool {
@@ -570,6 +743,29 @@ func L(_ english: String) -> String {
     case "from North":          return "من الشمال"
     case "Duaa":                return "الدعاء"
     case "Shuffle":             return "خلط"
+    // Quran
+    case "Quran":               return "القرآن"
+    case "Page":                return "صفحة"
+    case "Back":                return "رجوع"
+    case "Retry":               return "إعادة المحاولة"
+    case "Cancel":              return "إلغاء"
+    case "pages read":          return "صفحة مقروءة"
+    case "day streak":          return "يوم متتالي"
+    case "Mark page as read":   return "تحديد الصفحة كمقروءة"
+    case "Quran completed":     return "تم ختم القرآن"
+    case "You finished the whole Quran": return "ختمت القرآن الكريم"
+    case "May Allah accept it from you.": return "تقبل الله منك."
+    case "Start again":         return "ابدأ من جديد"
+    case "Daily reading reminder": return "تذكير القراءة اليومي"
+    case "Remind me at":        return "ذكّرني عند"
+    case "Translation":         return "الترجمة"
+    case "Undo last page":      return "تراجع عن آخر صفحة"
+    case "Reset progress":      return "إعادة ضبط التقدم"
+    case "Tap again to confirm": return "اضغط مرة أخرى للتأكيد"
+    case "Could not load this page. Check your connection.":
+        return "تعذر تحميل الصفحة. تحقق من الاتصال."
+    case "Daily page":          return "صفحة اليوم"
+    case "time to read today's page": return "حان وقت قراءة صفحة اليوم"
     // General settings
     case "Menu Bar Display":    return "شريط القائمة"
     case "Show Next Prayer":    return "عرض الصلاة القادمة"
@@ -648,7 +844,7 @@ func L(_ english: String) -> String {
     // About
     case "Mobile Developer":    return "مطور تطبيقات"
     case "Prayer Times for macOS": return "أوقات الصلاة لـ macOS"
-    case "Version 1.2.0":         return "الإصدار 1.2.0"
+    case "Version 1.3.0":         return "الإصدار 1.3.0"
     case "Made with ♥ by":      return "صُنع بـ ♥ من قِبل"
     case "Buy Me a Coffee — Ko-fi": return "ادعمني على Ko-fi ☕"
     case "Prayer times powered by AlAdhan API": return "أوقات الصلاة من AlAdhan API"
@@ -1194,6 +1390,619 @@ struct DuaaListView: View {
     }
 }
 
+// MARK: - Quran Reading
+
+/// Pages in the standard Madani mushaf.
+let quranTotalPages = 604
+
+enum QuranTranslation: String, CaseIterable, Codable {
+    case none    = "none"
+    case english = "en.sahih"
+    case french  = "fr.hamidullah"
+
+    var label: String {
+        switch self {
+        case .none:    return L("None")
+        case .english: return L("English")
+        case .french:  return "Français"
+        }
+    }
+}
+
+struct QuranAyah: Identifiable, Codable, Equatable {
+    let number: Int          // Global ayah number, 1...6236
+    let numberInSurah: Int
+    let text: String
+    let surahNumber: Int
+    let surahName: String    // Arabic
+    let surahEnglishName: String
+    var translation: String?
+
+    var id: Int { number }
+}
+
+// API shapes — https://api.alquran.cloud/v1/page/{page}/{edition}
+private struct QuranPageResponse: Codable { let data: QuranPageData }
+private struct QuranPageData: Codable { let ayahs: [QuranAPIAyah] }
+private struct QuranAPIAyah: Codable {
+    let number: Int
+    let text: String
+    let numberInSurah: Int
+    let surah: QuranAPISurah?
+}
+private struct QuranAPISurah: Codable {
+    let number: Int?
+    let name: String?
+    let englishName: String?
+}
+
+/// Tracks a page-a-day walk through the mushaf: pages are read in order, first to
+/// last, and only the first page that has not been marked as done is ever shown.
+@MainActor
+final class QuranManager: ObservableObject {
+    static let shared = QuranManager()
+
+    @Published private(set) var completedPages: Set<Int>
+    @Published private(set) var ayahs: [QuranAyah] = []
+    @Published private(set) var loadedPage: Int?
+    @Published private(set) var lastReadDate: Date?
+    @Published private(set) var streak: Int
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+
+    private let completedKey  = "quranCompletedPages"
+    private let lastReadKey   = "quranLastReadDate"
+    private let streakKey     = "quranStreak"
+
+    private init() {
+        let saved = UserDefaults.standard.array(forKey: completedKey) as? [Int] ?? []
+        completedPages = Set(saved.filter { (1...quranTotalPages).contains($0) })
+        lastReadDate = UserDefaults.standard.object(forKey: lastReadKey) as? Date
+        streak = UserDefaults.standard.integer(forKey: streakKey)
+    }
+
+    // MARK: Progress
+
+    /// The first page not yet marked as done — `nil` once the whole mushaf is finished.
+    var currentPage: Int? {
+        (1...quranTotalPages).first { !completedPages.contains($0) }
+    }
+
+    var readCount: Int { completedPages.count }
+    var isFinished: Bool { currentPage == nil }
+    var progress: Double { Double(readCount) / Double(quranTotalPages) }
+
+    var hasReadToday: Bool {
+        guard let lastReadDate else { return false }
+        return Calendar.current.isDateInToday(lastReadDate)
+    }
+
+    func markCurrentPageAsRead() {
+        guard let page = currentPage else { return }
+        completedPages.insert(page)
+        updateStreak()
+        lastReadDate = Date()
+        persist()
+        Task { await loadCurrentPage() }
+    }
+
+    /// Undo the most recently completed page (the highest one marked done).
+    func undoLastPage() {
+        guard let last = completedPages.max() else { return }
+        completedPages.remove(last)
+        persist()
+        Task { await loadCurrentPage() }
+    }
+
+    func resetProgress() {
+        completedPages.removeAll()
+        streak = 0
+        lastReadDate = nil
+        persist()
+        Task { await loadCurrentPage(force: true) }
+    }
+
+    private func updateStreak() {
+        let calendar = Calendar.current
+        if let last = lastReadDate {
+            if calendar.isDateInToday(last) { return }               // already counted today
+            if calendar.isDateInYesterday(last) { streak += 1 } else { streak = 1 }
+        } else {
+            streak = 1
+        }
+    }
+
+    private func persist() {
+        let defaults = UserDefaults.standard
+        defaults.set(completedPages.sorted(), forKey: completedKey)
+        defaults.set(streak, forKey: streakKey)
+        if let lastReadDate {
+            defaults.set(lastReadDate, forKey: lastReadKey)
+        } else {
+            defaults.removeObject(forKey: lastReadKey)
+        }
+    }
+
+    // MARK: Loading
+
+    func loadCurrentPage(force: Bool = false) async {
+        guard let page = currentPage else {
+            ayahs = []
+            loadedPage = nil
+            errorMessage = nil
+            return
+        }
+        await load(page: page, force: force)
+    }
+
+    private func load(page: Int, force: Bool) async {
+        if !force, loadedPage == page, !ayahs.isEmpty { return }
+
+        errorMessage = nil
+
+        // Cached pages render instantly and keep the reader usable offline.
+        if !force, let cached = cachedAyahs(for: page) {
+            ayahs = cached
+            loadedPage = page
+            return
+        }
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let translationEdition = SettingsManager.shared.quranTranslation
+        async let arabicTask = fetchArabic(page: page)
+        async let translationTask = fetchTranslation(page: page, translation: translationEdition)
+
+        guard let arabic = await arabicTask, !arabic.isEmpty else {
+            if let cached = cachedAyahs(for: page) {
+                ayahs = cached
+                loadedPage = page
+            } else {
+                ayahs = []
+                loadedPage = nil
+                errorMessage = L("Could not load this page. Check your connection.")
+            }
+            return
+        }
+
+        var translations: [Int: String] = [:]
+        if let translated = await translationTask {
+            for ayah in translated { translations[ayah.number] = ayah.text }
+        }
+
+        let merged = arabic.map { ayah in
+            QuranAyah(number: ayah.number,
+                      numberInSurah: ayah.numberInSurah,
+                      text: ayah.text,
+                      surahNumber: ayah.surah?.number ?? 0,
+                      surahName: ayah.surah?.name ?? "",
+                      surahEnglishName: ayah.surah?.englishName ?? "",
+                      translation: translations[ayah.number])
+        }
+
+        ayahs = merged
+        loadedPage = page
+        cache(merged, for: page)
+    }
+
+    private func fetchArabic(page: Int) async -> [QuranAPIAyah]? {
+        if let uthmani = await fetch(page: page, edition: "quran-uthmani"), !uthmani.isEmpty {
+            return uthmani
+        }
+        return await fetch(page: page, edition: "quran-simple")
+    }
+
+    private func fetchTranslation(page: Int, translation: QuranTranslation) async -> [QuranAPIAyah]? {
+        guard translation != .none else { return nil }
+        return await fetch(page: page, edition: translation.rawValue)
+    }
+
+    private func fetch(page: Int, edition: String) async -> [QuranAPIAyah]? {
+        guard let url = URL(string: "https://api.alquran.cloud/v1/page/\(page)/\(edition)") else { return nil }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return nil }
+            return try JSONDecoder().decode(QuranPageResponse.self, from: data).data.ayahs
+        } catch {
+            print("Quran page \(page) [\(edition)] failed: \(error)")
+            return nil
+        }
+    }
+
+    // MARK: Cache
+
+    // Keyed by edition too, so switching translation does not serve a stale page.
+    private func cacheKey(_ page: Int) -> String {
+        "quranPageCache-\(page)-\(SettingsManager.shared.quranTranslation.rawValue)"
+    }
+
+    private func cachedAyahs(for page: Int) -> [QuranAyah]? {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey(page)),
+              let decoded = try? JSONDecoder().decode([QuranAyah].self, from: data),
+              !decoded.isEmpty else { return nil }
+        return decoded
+    }
+
+    private func cache(_ ayahs: [QuranAyah], for page: Int) {
+        guard let data = try? JSONEncoder().encode(ayahs) else { return }
+        UserDefaults.standard.set(data, forKey: cacheKey(page))
+    }
+}
+
+/// Renders Latin digits as Arabic-Indic when the app is in Arabic mode.
+func localizedNumber(_ value: Int) -> String {
+    guard SettingsManager.shared.arabicMode else { return "\(value)" }
+    let digits = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"]
+    return String("\(value)".map { char in
+        guard let d = char.wholeNumberValue, (0...9).contains(d) else { return char }
+        return Character(digits[d])
+    })
+}
+
+// MARK: - Quran Reader View
+
+struct QuranReaderView: View {
+    @ObservedObject private var quran = QuranManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
+    @State private var showingReminderOptions = false
+    /// Two-step confirm — a real alert would attach a window-modal sheet to the
+    /// popover, which is exactly the thing that used to wedge this app.
+    @State private var confirmingReset = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            if quran.isFinished {
+                completionView
+            } else if quran.isLoading && quran.ayahs.isEmpty {
+                Spacer()
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "E94560")))
+                Text(L("Loading..."))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.5))
+                    .padding(.top, 8)
+                Spacer()
+            } else if let error = quran.errorMessage, quran.ayahs.isEmpty {
+                Spacer()
+                VStack(spacing: 12) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 28))
+                        .foregroundColor(.white.opacity(0.3))
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.5))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                    Button(L("Retry")) {
+                        Task { await quran.loadCurrentPage(force: true) }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Color(hex: "E94560"))
+                    .font(.system(size: 13, weight: .medium))
+                }
+                Spacer()
+            } else {
+                pageView
+            }
+
+            if showingReminderOptions { reminderOptions }
+
+            footer
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            ZStack {
+                Color(hex: "1A1A2E")
+                AppBackground()
+            }
+        )
+        .preferredColorScheme(.dark)
+        .task { await quran.loadCurrentPage() }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Button(action: { PopoverRouter.shared.goHome() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text(L("Back"))
+                    }
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(settings.arabicMode ? "القرآن الكريم" : L("Quran"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation {
+                        showingReminderOptions.toggle()
+                        confirmingReset = false
+                    }
+                }) {
+                    Image(systemName: showingReminderOptions ? "bell.fill" : "bell")
+                        .font(.system(size: 12))
+                        .foregroundColor(showingReminderOptions ? Color(hex: "E94560") : .white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !quran.isFinished {
+                HStack(spacing: 6) {
+                    Text("\(L("Page")) \(localizedNumber(quran.currentPage ?? 1))")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(Color(hex: "E94560"))
+                    Text("/ \(localizedNumber(quranTotalPages))")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.35))
+                }
+            }
+
+            progressBar
+
+            HStack(spacing: 10) {
+                Text("\(localizedNumber(quran.readCount)) \(L("pages read"))")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.4))
+                if quran.streak > 1 {
+                    Text("🔥 \(localizedNumber(quran.streak)) \(L("day streak"))")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.08))
+                Capsule()
+                    .fill(Color(hex: "E94560"))
+                    .frame(width: max(0, geo.size.width * quran.progress))
+            }
+        }
+        .frame(height: 4)
+    }
+
+    // MARK: Page content
+
+    private var pageView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .trailing, spacing: 18) {
+                    ForEach(surahGroups, id: \.surahNumber) { group in
+                        VStack(alignment: .trailing, spacing: 10) {
+                            let surahLabel = settings.arabicMode
+                                ? group.surahName
+                                : (group.surahEnglishName.isEmpty ? group.surahName : group.surahEnglishName)
+                            if !surahLabel.isEmpty {
+                                HStack {
+                                    Spacer()
+                                    Text(surahLabel)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(Color(hex: "E94560").opacity(0.8))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                        .background(Capsule().fill(Color(hex: "E94560").opacity(0.12)))
+                                }
+                            }
+
+                            Text(arabicText(for: group.ayahs))
+                                .font(.system(size: 19, weight: .regular))
+                                .foregroundColor(.white)
+                                .lineSpacing(12)
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .environment(\.layoutDirection, .rightToLeft)
+                                .textSelection(.enabled)
+
+                            if settings.quranTranslation != .none {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(group.ayahs) { ayah in
+                                        if let translation = ayah.translation, !translation.isEmpty {
+                                            Text("\(ayah.numberInSurah). \(translation)")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.white.opacity(0.5))
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                }
+                                .padding(.top, 4)
+                            }
+                        }
+                        .padding(14)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04)))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .id(quran.loadedPage ?? 0)
+            }
+            .onChange(of: quran.loadedPage) { page in
+                // A freshly advanced page should start at the top.
+                withAnimation { proxy.scrollTo(page ?? 0, anchor: .top) }
+            }
+        }
+    }
+
+    private struct SurahGroup {
+        let surahNumber: Int
+        let surahName: String
+        let surahEnglishName: String
+        let ayahs: [QuranAyah]
+    }
+
+    /// A mushaf page can straddle a surah boundary — keep the ayahs in order and
+    /// start a new block whenever the surah changes.
+    private var surahGroups: [SurahGroup] {
+        var groups: [SurahGroup] = []
+        for ayah in quran.ayahs {
+            if let last = groups.last, last.surahNumber == ayah.surahNumber {
+                groups[groups.count - 1] = SurahGroup(surahNumber: last.surahNumber,
+                                                      surahName: last.surahName,
+                                                      surahEnglishName: last.surahEnglishName,
+                                                      ayahs: last.ayahs + [ayah])
+            } else {
+                groups.append(SurahGroup(surahNumber: ayah.surahNumber,
+                                         surahName: ayah.surahName,
+                                         surahEnglishName: ayah.surahEnglishName,
+                                         ayahs: [ayah]))
+            }
+        }
+        return groups
+    }
+
+    private func arabicText(for ayahs: [QuranAyah]) -> String {
+        ayahs.map { "\($0.text) ﴿\(localizedNumber($0.numberInSurah))﴾" }.joined(separator: " ")
+    }
+
+    // MARK: Completion
+
+    private var completionView: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 44))
+                .foregroundColor(Color(hex: "E94560"))
+            Text(settings.arabicMode ? "ختمت القرآن الكريم" : L("You finished the whole Quran"))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+            Text(L("May Allah accept it from you."))
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
+                .multilineTextAlignment(.center)
+            Button(action: { quran.resetProgress() }) {
+                Text(L("Start again"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color(hex: "E94560")))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 6)
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+    }
+
+    // MARK: Reminder options
+
+    private var reminderOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $settings.quranReminderEnabled) {
+                Text(L("Daily reading reminder"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            .toggleStyle(.switch)
+            .tint(Color(hex: "E94560"))
+
+            if settings.quranReminderEnabled {
+                HStack {
+                    Text(L("Remind me at"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.6))
+                    Spacer()
+                    Picker("", selection: $settings.quranReminderHour) {
+                        ForEach(0..<24, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 62)
+                    Text(":").foregroundColor(.white.opacity(0.4))
+                    Picker("", selection: $settings.quranReminderMinute) {
+                        ForEach([0, 15, 30, 45], id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 62)
+                }
+            }
+
+            HStack {
+                Text(L("Translation"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                Spacer()
+                Picker("", selection: $settings.quranTranslation) {
+                    ForEach(QuranTranslation.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+            }
+
+            HStack(spacing: 16) {
+                Button(action: { quran.undoLastPage() }) {
+                    Text(L("Undo last page"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .disabled(quran.readCount == 0)
+
+                Button(action: {
+                    if confirmingReset {
+                        quran.resetProgress()
+                        confirmingReset = false
+                    } else {
+                        withAnimation { confirmingReset = true }
+                    }
+                }) {
+                    Text(confirmingReset ? L("Tap again to confirm") : L("Reset progress"))
+                        .font(.system(size: 11))
+                        .foregroundColor(confirmingReset ? Color(hex: "E94560") : .white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .disabled(quran.readCount == 0)
+
+                Spacer()
+            }
+        }
+        .padding(14)
+        .background(Color.black.opacity(0.25))
+    }
+
+    // MARK: Footer
+
+    private var footer: some View {
+        Group {
+            if !quran.isFinished {
+                Button(action: { quran.markCurrentPageAsRead() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 14))
+                        Text(L("Mark page as read"))
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(hex: "E94560"))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(quran.ayahs.isEmpty)
+                .opacity(quran.ayahs.isEmpty ? 0.4 : 1)
+            }
+        }
+    }
+}
+
 // MARK: - API Models
 struct AlAdhanResponse: Codable { let data: AlAdhanData }
 struct AlAdhanData: Codable { let timings: Timings?; let date: DateInfo }
@@ -1329,12 +2138,44 @@ struct MenuBarPopoverView: View {
     @ObservedObject var manager: PrayerTimesManager
     @ObservedObject private var settings = SettingsManager.shared
     @ObservedObject private var player = AthanPlayer.shared
+    @ObservedObject private var quran = QuranManager.shared
     weak var appDelegate: AppDelegate?
-    @State private var showingSettings = false
-    @State private var showingAbout = false
+    @ObservedObject private var router = PopoverRouter.shared
     @State private var glowPulse = false
 
     var body: some View {
+        ZStack {
+            homeView
+                .disabled(router.route != .home)
+
+            switch router.route {
+            case .home:
+                EmptyView()
+            case .settings:
+                SettingsView(manager: manager, appDelegate: appDelegate)
+                    .transition(.opacity)
+            case .about:
+                AboutView()
+                    .transition(.opacity)
+            case .quran:
+                QuranReaderView()
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: 380, height: 750)
+        .background(AppBackground())
+        .animation(.easeInOut(duration: 0.18), value: router.route)
+        .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
+            appDelegate?.refreshMenuBar()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
+            // Force view refresh when prayer times change
+            appDelegate?.refreshMenuBar()
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var homeView: some View {
         VStack(spacing: 0) {
             headerView
 
@@ -1353,18 +2194,11 @@ struct MenuBarPopoverView: View {
                 Text(L("No prayer times available")).foregroundColor(.white.opacity(0.5)).padding(.vertical, 40)
             }
 
+            quranBanner
+
             footerView
         }
-        .frame(width: 380, height: 750)
-        .background(AppBackground())
-        .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
-            appDelegate?.refreshMenuBar()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
-            // Force view refresh when prayer times change
-            appDelegate?.refreshMenuBar()
-        }
-        .preferredColorScheme(.dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var headerView: some View {
@@ -1575,7 +2409,7 @@ struct MenuBarPopoverView: View {
             }
 
             HStack(spacing: 20) {
-                Button(action: { showingSettings = true }) {
+                Button(action: { router.route = .settings }) {
                     HStack(spacing: 4) { Image(systemName: "gearshape"); Text(L("Settings")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
@@ -1583,7 +2417,7 @@ struct MenuBarPopoverView: View {
                     HStack(spacing: 4) { Image(systemName: "arrow.clockwise"); Text(L("Refresh")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
-                Button(action: { showingAbout = true }) {
+                Button(action: { router.route = .about }) {
                     HStack(spacing: 4) { Image(systemName: "info.circle"); Text(L("About")) }
                         .font(.system(size: 12)).foregroundColor(.white.opacity(0.7))
                 }.buttonStyle(.plain)
@@ -1597,8 +2431,48 @@ struct MenuBarPopoverView: View {
             .background(Color.black.opacity(0.2))
         }
         .animation(.easeInOut(duration: 0.25), value: player.isPlaying)
-        .sheet(isPresented: $showingSettings) { SettingsView(manager: manager, appDelegate: appDelegate) }
-        .sheet(isPresented: $showingAbout) { AboutView() }
+    }
+
+    /// Compact entry point to the daily Quran page, with live progress.
+    private var quranBanner: some View {
+        Button(action: { router.route = .quran }) {
+            HStack(spacing: 10) {
+                Image(systemName: "book.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color(hex: "E94560"))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(quran.isFinished
+                         ? L("Quran completed")
+                         : "\(L("Quran")) · \(L("Page")) \(quran.currentPage ?? 1)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.85))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.08))
+                            Capsule()
+                                .fill(Color(hex: "E94560"))
+                                .frame(width: max(0, geo.size.width * quran.progress))
+                        }
+                    }
+                    .frame(height: 3)
+                }
+
+                Text("\(quran.readCount)/\(quranTotalPages)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.4))
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.3))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(Color.white.opacity(0.03))
     }
 
     private func isCurrentPrayer(_ prayer: Prayer) -> Bool {
@@ -1626,7 +2500,6 @@ struct MenuBarPopoverView: View {
 struct SettingsView: View {
     @ObservedObject var manager: PrayerTimesManager
     weak var appDelegate: AppDelegate?
-    @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
 
     var body: some View {
@@ -1651,10 +2524,20 @@ struct SettingsView: View {
                 DuaaListView().tag(6)
             }.tabViewStyle(.automatic)
 
-            HStack { Spacer(); Button(L("Done")) { dismiss() }.foregroundColor(Color(hex: "E94560")).padding() }
+            HStack {
+                Spacer()
+                Button(L("Done")) { PopoverRouter.shared.goHome() }
+                    .foregroundColor(Color(hex: "E94560"))
+                    .padding()
+            }
         }
-        .frame(width: 380, height: 500)
-        .background(AppBackground())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            ZStack {
+                Color(hex: "1A1A2E")
+                AppBackground()
+            }
+        )
         .onReceive(NotificationCenter.default.publisher(for: .refreshPrayerTimes)) { _ in
             // Force refresh when location/prayer times change
         }
@@ -1748,7 +2631,8 @@ struct GeneralSettingsView: View {
                                 panel.allowsMultipleSelection = false
                                 panel.canChooseDirectories = false
                                 panel.message = "Choose a background image"
-                                if panel.runModal() == .OK, let url = panel.url {
+                                let response = appDelegate?.withModalPanel { panel.runModal() } ?? panel.runModal()
+                                if response == .OK, let url = panel.url {
                                     // Store both bookmark (sandbox-safe) and plain path (fallback)
                                     if let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
                                         UserDefaults.standard.set(bookmark, forKey: "backgroundImageBookmark")
@@ -2410,7 +3294,6 @@ struct AthanSettingsView: View {
 
 // MARK: - About View
 struct AboutView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var settings = SettingsManager.shared
 
     // ── Update these two lines ──────────────────────────────────────────
@@ -2418,110 +3301,113 @@ struct AboutView: View {
     // ────────────────────────────────────────────────────────────────────
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            VStack(spacing: 10) {
-                if let logo = NSImage(named: "AppLogo") {
-                    Image(nsImage: logo)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 80, height: 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .shadow(color: Color(hex: "E94560").opacity(0.3), radius: 12)
-                        .padding(.top, 32)
-                } else {
-                    Image(systemName: "moon.stars.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(Color(hex: "E94560"))
-                        .padding(.top, 32)
-                }
-
-                Text("Salaati")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(.white)
-
-                Text(L("Prayer Times for macOS"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
-
-                Text(L("Version 1.2.0"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
-                    .padding(.bottom, 8)
-            }
-
-            Divider().background(Color.white.opacity(0.08))
-
-            // Developer card
-            VStack(spacing: 12) {
-                Text(L("Made with ♥ by"))
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
-
-                Button {
-                    NSWorkspace.shared.open(URL(string: portfolioURL)!)
-                } label: {
-                    HStack(spacing: 10) {
-                        ZStack {
-                            Circle()
-                                .fill(Color(hex: "E94560").opacity(0.2))
-                                .frame(width: 44, height: 44)
-                            Text("M")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(Color(hex: "E94560"))
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Mehdi Griche")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text(L("Mobile Developer"))
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.5))
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.3))
+        ScrollView {
+            VStack(spacing: 0) {
+                // Header
+                VStack(spacing: 10) {
+                    if let logo = NSImage(named: "AppLogo") {
+                        Image(nsImage: logo)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .shadow(color: Color(hex: "E94560").opacity(0.3), radius: 12)
+                            .padding(.top, 32)
+                    } else {
+                        Image(systemName: "moon.stars.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(Color(hex: "E94560"))
+                            .padding(.top, 32)
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
+
+                    Text("Salaati")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundColor(.white)
+
+                    Text(L("Prayer Times for macOS"))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.5))
+
+                    Text(L("Version 1.3.0"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.3))
+                        .padding(.bottom, 8)
                 }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
 
-            Divider().background(Color.white.opacity(0.08))
+                Divider().background(Color.white.opacity(0.08))
 
-            // Description
-            VStack(spacing: 8) {
-                Text(L("Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS."))
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.45))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 16)
+                // Developer card
+                VStack(spacing: 12) {
+                    Text(L("Made with ♥ by"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.4))
 
-            // Tip Jar
-            TipJarView()
+                    Button {
+                        NSWorkspace.shared.open(URL(string: portfolioURL)!)
+                    } label: {
+                        HStack(spacing: 10) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(hex: "E94560").opacity(0.2))
+                                    .frame(width: 44, height: 44)
+                                Text("M")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(Color(hex: "E94560"))
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Mehdi Griche")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                Text(L("Mobile Developer"))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.3))
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
+                    }
+                    .buttonStyle(.plain)
+                }
                 .padding(.horizontal, 24)
+                .padding(.vertical, 20)
 
-            // Prayer times API credit
-            Text(L("Prayer times powered by AlAdhan API"))
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.25))
-                .padding(.top, 12)
-                .padding(.bottom, 6)
+                Divider().background(Color.white.opacity(0.08))
 
-            // Done
-            Button(L("Done")) { dismiss() }
-                .foregroundColor(Color(hex: "E94560"))
-                .font(.system(size: 13))
-                .padding(.bottom, 20)
+                // Description
+                VStack(spacing: 8) {
+                    Text(L("Salaati provides accurate prayer times, athan notifications, and a beautiful menu bar experience — built for Muslim users on macOS."))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
+
+                // Tip Jar
+                TipJarView()
+                    .padding(.horizontal, 24)
+
+                // Prayer times API credit
+                Text(L("Prayer times powered by AlAdhan API"))
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.25))
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+
+                // Done
+                Button(L("Done")) { PopoverRouter.shared.goHome() }
+                    .foregroundColor(Color(hex: "E94560"))
+                    .font(.system(size: 13))
+                    .padding(.bottom, 20)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(width: 340)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             ZStack {
                 Color(hex: "1A1A2E")
@@ -2710,6 +3596,18 @@ class NotificationManager {
             let reminderTime = sunrise.time.addingTimeInterval(Double(-settings.reminderSunriseMinutes * 60))
             schedule(content: content, at: reminderTime, identifier: "reminder-sunrise")
         }
+    }
+
+    /// Fired by the daily Quran reminder — delivered right away, not scheduled.
+    func sendQuranReminder(page: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "📖 \(L("Quran")) · \(L("Daily page"))"
+        content.body = "\(L("Page")) \(page) / \(quranTotalPages) — \(L("time to read today's page"))"
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "quran-daily", content: content, trigger: nil)
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["quran-daily"])
+        center.add(request, withCompletionHandler: nil)
     }
 
     private func schedule(content: UNMutableNotificationContent, at date: Date, identifier: String) {
