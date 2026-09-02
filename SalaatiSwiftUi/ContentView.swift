@@ -86,7 +86,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 750)
+        popover.contentSize = NSSize(width: PopoverRouter.contentWidth(for: .home),
+                                     height: PopoverRouter.contentHeight)
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
@@ -105,6 +106,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(appDidResignActive),
             name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        // Views can ask to be dismissed (e.g. after marking a Quran page read).
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(dismissPopoverRequested),
+            name: .dismissPopover,
+            object: nil
+        )
+
+        // Each screen declares its own width — resize the popover to match.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(popoverRouteChanged),
+            name: .popoverRouteChanged,
             object: nil
         )
     }
@@ -350,6 +366,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PopoverRouter.shared.route = .home
     }
 
+    @objc private func dismissPopoverRequested() {
+        closePopover()
+    }
+
+    @objc private func popoverRouteChanged() {
+        popover.contentSize = NSSize(width: PopoverRouter.contentWidth(for: PopoverRouter.shared.route),
+                                     height: PopoverRouter.contentHeight)
+    }
+
     @objc private func appDidResignActive() {
         guard !suppressOutsideDismiss else { return }
         closePopover()
@@ -408,10 +433,28 @@ enum PopoverRoute { case home, settings, about, quran }
 @MainActor
 final class PopoverRouter: ObservableObject {
     static let shared = PopoverRouter()
-    @Published var route: PopoverRoute = .home
+    @Published var route: PopoverRoute = .home {
+        didSet {
+            guard route != oldValue else { return }
+            NotificationCenter.default.post(name: .popoverRouteChanged, object: nil)
+        }
+    }
     private init() {}
 
     func goHome() { route = .home }
+
+    static let contentHeight: CGFloat = 750
+
+    /// Settings needs more room than the prayer list: its seven-segment tab
+    /// picker has a hard minimum width of roughly 455pt, so at 380 it overflowed
+    /// and was clipped on both edges along with the Done button.
+    static func contentWidth(for route: PopoverRoute) -> CGFloat {
+        switch route {
+        case .settings: return 500
+        case .quran:    return 420
+        case .home, .about: return 380
+        }
+    }
 }
 
 // MARK: - Settings Manager
@@ -589,13 +632,6 @@ class SettingsManager: ObservableObject {
     @Published var quranReminderMinute: Int {
         didSet { UserDefaults.standard.set(quranReminderMinute, forKey: "quranReminderMinute") }
     }
-    @Published var quranTranslation: QuranTranslation {
-        didSet {
-            UserDefaults.standard.set(quranTranslation.rawValue, forKey: "quranTranslation")
-            guard quranTranslation != oldValue else { return }
-            Task { @MainActor in await QuranManager.shared.loadCurrentPage(force: true) }
-        }
-    }
 
     // Adjustments are applied locally — no network call needed
     private func refreshPrayerTimesIfNeeded() {
@@ -646,7 +682,6 @@ class SettingsManager: ObservableObject {
         quranReminderEnabled = UserDefaults.standard.object(forKey: "quranReminderEnabled") as? Bool ?? true
         quranReminderHour    = UserDefaults.standard.object(forKey: "quranReminderHour")   as? Int ?? 20
         quranReminderMinute  = UserDefaults.standard.object(forKey: "quranReminderMinute") as? Int ?? 0
-        quranTranslation = QuranTranslation(rawValue: UserDefaults.standard.string(forKey: "quranTranslation") ?? "") ?? .english
     }
 
     func athanEnabled(for prayerName: String) -> Bool {
@@ -679,6 +714,8 @@ extension Notification.Name {
     static let refreshMenuBar = Notification.Name("refreshMenuBar")
     static let refreshPrayerTimes = Notification.Name("refreshPrayerTimes")
     static let applyAdjustments = Notification.Name("applyAdjustments")
+    static let dismissPopover = Notification.Name("dismissPopover")
+    static let popoverRouteChanged = Notification.Name("popoverRouteChanged")
 }
 
 enum PrayerNameDisplay: Int, CaseIterable { case full = 0, abbreviation = 1, none = 2 }
@@ -758,7 +795,6 @@ func L(_ english: String) -> String {
     case "Start again":         return "ابدأ من جديد"
     case "Daily reading reminder": return "تذكير القراءة اليومي"
     case "Remind me at":        return "ذكّرني عند"
-    case "Translation":         return "الترجمة"
     case "Undo last page":      return "تراجع عن آخر صفحة"
     case "Reset progress":      return "إعادة ضبط التقدم"
     case "Tap again to confirm": return "اضغط مرة أخرى للتأكيد"
@@ -1395,20 +1431,6 @@ struct DuaaListView: View {
 /// Pages in the standard Madani mushaf.
 let quranTotalPages = 604
 
-enum QuranTranslation: String, CaseIterable, Codable {
-    case none    = "none"
-    case english = "en.sahih"
-    case french  = "fr.hamidullah"
-
-    var label: String {
-        switch self {
-        case .none:    return L("None")
-        case .english: return L("English")
-        case .french:  return "Français"
-        }
-    }
-}
-
 struct QuranAyah: Identifiable, Codable, Equatable {
     let number: Int          // Global ayah number, 1...6236
     let numberInSurah: Int
@@ -1416,7 +1438,6 @@ struct QuranAyah: Identifiable, Codable, Equatable {
     let surahNumber: Int
     let surahName: String    // Arabic
     let surahEnglishName: String
-    var translation: String?
 
     var id: Int { number }
 }
@@ -1550,11 +1571,7 @@ final class QuranManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let translationEdition = SettingsManager.shared.quranTranslation
-        async let arabicTask = fetchArabic(page: page)
-        async let translationTask = fetchTranslation(page: page, translation: translationEdition)
-
-        guard let arabic = await arabicTask, !arabic.isEmpty else {
+        guard let arabic = await fetchArabic(page: page), !arabic.isEmpty else {
             if let cached = cachedAyahs(for: page) {
                 ayahs = cached
                 loadedPage = page
@@ -1566,19 +1583,13 @@ final class QuranManager: ObservableObject {
             return
         }
 
-        var translations: [Int: String] = [:]
-        if let translated = await translationTask {
-            for ayah in translated { translations[ayah.number] = ayah.text }
-        }
-
         let merged = arabic.map { ayah in
             QuranAyah(number: ayah.number,
                       numberInSurah: ayah.numberInSurah,
                       text: ayah.text,
                       surahNumber: ayah.surah?.number ?? 0,
                       surahName: ayah.surah?.name ?? "",
-                      surahEnglishName: ayah.surah?.englishName ?? "",
-                      translation: translations[ayah.number])
+                      surahEnglishName: ayah.surah?.englishName ?? "")
         }
 
         ayahs = merged
@@ -1591,11 +1602,6 @@ final class QuranManager: ObservableObject {
             return uthmani
         }
         return await fetch(page: page, edition: "quran-simple")
-    }
-
-    private func fetchTranslation(page: Int, translation: QuranTranslation) async -> [QuranAPIAyah]? {
-        guard translation != .none else { return nil }
-        return await fetch(page: page, edition: translation.rawValue)
     }
 
     private func fetch(page: Int, edition: String) async -> [QuranAPIAyah]? {
@@ -1612,10 +1618,7 @@ final class QuranManager: ObservableObject {
 
     // MARK: Cache
 
-    // Keyed by edition too, so switching translation does not serve a stale page.
-    private func cacheKey(_ page: Int) -> String {
-        "quranPageCache-\(page)-\(SettingsManager.shared.quranTranslation.rawValue)"
-    }
+    private func cacheKey(_ page: Int) -> String { "quranPageCache-\(page)" }
 
     private func cachedAyahs(for page: Int) -> [QuranAyah]? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey(page)),
@@ -1811,20 +1814,6 @@ struct QuranReaderView: View {
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                                 .environment(\.layoutDirection, .rightToLeft)
                                 .textSelection(.enabled)
-
-                            if settings.quranTranslation != .none {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(group.ayahs) { ayah in
-                                        if let translation = ayah.translation, !translation.isEmpty {
-                                            Text("\(ayah.numberInSurah). \(translation)")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(.white.opacity(0.5))
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                        }
-                                    }
-                                }
-                                .padding(.top, 4)
-                            }
                         }
                         .padding(14)
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04)))
@@ -1935,18 +1924,6 @@ struct QuranReaderView: View {
                 }
             }
 
-            HStack {
-                Text(L("Translation"))
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.6))
-                Spacer()
-                Picker("", selection: $settings.quranTranslation) {
-                    ForEach(QuranTranslation.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .labelsHidden()
-                .frame(width: 130)
-            }
-
             HStack(spacing: 16) {
                 Button(action: { quran.undoLastPage() }) {
                     Text(L("Undo last page"))
@@ -1983,7 +1960,11 @@ struct QuranReaderView: View {
     private var footer: some View {
         Group {
             if !quran.isFinished {
-                Button(action: { quran.markCurrentPageAsRead() }) {
+                Button(action: {
+                    quran.markCurrentPageAsRead()
+                    // Today's page is done — get out of the user's way.
+                    NotificationCenter.default.post(name: .dismissPopover, object: nil)
+                }) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 14))
                         Text(L("Mark page as read"))
@@ -2162,7 +2143,8 @@ struct MenuBarPopoverView: View {
                     .transition(.opacity)
             }
         }
-        .frame(width: 380, height: 750)
+        .frame(width: PopoverRouter.contentWidth(for: router.route),
+               height: PopoverRouter.contentHeight)
         .background(AppBackground())
         .animation(.easeInOut(duration: 0.18), value: router.route)
         .onReceive(NotificationCenter.default.publisher(for: .refreshMenuBar)) { _ in
@@ -2512,17 +2494,23 @@ struct SettingsView: View {
                 Text(L("Athan")).tag(4)
                 Text(L("Qibla")).tag(5)
                 Text(L("Duaa")).tag(6)
-            }.pickerStyle(.segmented).padding()
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
 
-            TabView(selection: $selectedTab) {
-                GeneralSettingsView(appDelegate: appDelegate).tag(0)
-                LocationSettingsView(manager: manager, appDelegate: appDelegate).tag(1)
-                PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate).tag(2)
-                AdjustmentsSettingsView(manager: manager).tag(3)
-                AthanSettingsView().tag(4)
-                QiblaView(manager: manager).tag(5)
-                DuaaListView().tag(6)
-            }.tabViewStyle(.automatic)
+            Group {
+                switch selectedTab {
+                case 0: GeneralSettingsView(appDelegate: appDelegate)
+                case 1: LocationSettingsView(manager: manager, appDelegate: appDelegate)
+                case 2: PrayerTimesSettingsView(manager: manager, appDelegate: appDelegate)
+                case 3: AdjustmentsSettingsView(manager: manager)
+                case 4: AthanSettingsView()
+                case 5: QiblaView(manager: manager)
+                default: DuaaListView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack {
                 Spacer()
